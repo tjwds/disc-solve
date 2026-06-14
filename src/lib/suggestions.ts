@@ -112,7 +112,7 @@ export function reclaimable(root: Node): Suggestion[] {
 
   const trash = sumCategory(root, "trash");
   if (trash > 0) {
-    out.push({ key: "trash", title: "Empty Trash", subtitle: "Opens the Trash in Finder", bytes: trash, action: "openTrash" });
+    out.push({ key: "trash", title: "Items that can be permanently deleted", subtitle: "Already in your Trash", bytes: trash, action: "openTrash" });
   }
 
   return out.sort((a, b) => b.bytes - a.bytes);

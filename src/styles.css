@@ -114,6 +114,11 @@ body {
 .r2 { display: flex; align-items: baseline; gap: 8px; margin-top: 2px; }
 .r2t { font-size: 11px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .amt { font-size: 11.5px; font-weight: 700; flex: 0 0 auto; }
+/* On hover, swap the size readout for an action button: the button takes the
+   right edge, the size hides, and the left-hand text truncates to make room. */
+.rec-btn { display: none; flex: 0 0 auto; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 7px; padding: 5px 11px; font-size: 11.5px; font-weight: 600; cursor: pointer; font-family: inherit; white-space: nowrap; }
+.rec:hover .amt { display: none; }
+.rec:hover .rec-btn { display: inline-flex; align-items: center; }
 .rec-empty { padding: 4px 10px; font-size: 12px; color: var(--ink-2); }
 
 /* main */
@@ -237,7 +242,7 @@ body {
 .df-path { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
 .dupfile.keep .df-path { color: var(--ink); }
 .df-tag { font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--ink-3); }
-.df-act { display: flex; gap: 6px; }
+.df-act { display: flex; align-items: center; gap: 6px; }
 .df-act .iact { width: 28px; height: 28px; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--control); color: var(--ink-2); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .df-act .iact svg { width: 14px; height: 14px; }
 .df-act .iact.danger { color: var(--red); border-color: var(--red); }

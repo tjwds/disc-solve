@@ -24,6 +24,9 @@ const ICON_TRASH = (
 const ICON_OPEN = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 6l6 6-6 6" /></svg>
 );
+const ICON_TERMINAL = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4.5" width="18" height="15" rx="2" /><path d="M7 9.5l3 2.5-3 2.5M12.5 15h4.5" /></svg>
+);
 
 interface ScanEvent { files: number; bytes: number; total: number }
 interface ScanProgress { files: number; bytes: number; pct: number }
@@ -42,6 +45,22 @@ function findChain(root: Node, targetPath: string): Node[] {
     return false;
   };
   return dfs(root) ? chain : [root];
+}
+
+// The folder within `root`'s subtree whose children include `target` (matched by
+// identity, not path — aggregate "N smaller items" nodes all share an empty path).
+// Lets a click on an aggregate tile drill into the folder that holds those items.
+function parentOf(root: Node, target: Node): Node | null {
+  let found: Node | null = null;
+  const dfs = (n: Node): boolean => {
+    for (const c of n.children) {
+      if (c === target) { found = n; return true; }
+      if (dfs(c)) return true;
+    }
+    return false;
+  };
+  dfs(root);
+  return found;
 }
 
 // Re-anchor a navigation stack into a freshly edited tree by path. Nodes present
@@ -365,6 +384,7 @@ export default function App() {
                 onToggleAll={toggleAll}
                 onDrill={drill}
                 onReveal={(n) => api.revealInFinder(n.path)}
+                onTerminal={(n) => api.openTerminalHere(dirOf(n))}
                 onTrashOne={(n) => trashPaths([n.path], `${n.name} (${fmtBytes(n.size)})`)}
               />
             </>
@@ -543,8 +563,10 @@ function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgre
         <h3 className="side-h">Recommended</h3>
       </div>
       <div className="recs">
-        {suggestions.map((s) => (
-          <div className="rec" key={s.key} onClick={() => onRecommend(s)} title={s.action === "openTrash" ? "Open the Trash in Finder" : "Show all in a list"}>
+        {/* The suggestions are derived from the prior tree, so hide them while a
+            (re)scan is in flight rather than offering stale, possibly-gone targets. */}
+        {!scanning && suggestions.map((s) => (
+          <div className="rec" key={s.key} onClick={() => onRecommend(s)}>
             <div className="rbody">
               <div className="r1">{s.title}</div>
               <div className="r2">
@@ -552,6 +574,9 @@ function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgre
                 <span className="amt">{fmtBytes(s.bytes)}</span>
               </div>
             </div>
+            <button className="rec-btn" onClick={(e) => { e.stopPropagation(); onRecommend(s); }}>
+              {s.action === "openTrash" ? "Open Trash in Finder" : "View in list view"}
+            </button>
           </div>
         ))}
       </div>
@@ -607,7 +632,7 @@ const ROW_H = 46; // .lrow height (px); rows are fixed-height, so the list can b
 const ROW_OVERSCAN = 8;
 
 function ListView({
-  items, loading, sort, onSort, checked, nameFromParent, home, onToggleCheck, onToggleAll, onDrill, onReveal, onTrashOne,
+  items, loading, sort, onSort, checked, nameFromParent, home, onToggleCheck, onToggleAll, onDrill, onReveal, onTerminal, onTrashOne,
 }: {
   items: Node[];
   loading: boolean;
@@ -620,6 +645,7 @@ function ListView({
   onToggleAll: () => void;
   onDrill: (n: Node) => void;
   onReveal: (n: Node) => void;
+  onTerminal: (n: Node) => void;
   onTrashOne: (n: Node) => void;
 }) {
   const sorted = useMemo(() => sortItems(items, sort.key, sort.dir), [items, sort]);
@@ -699,6 +725,7 @@ function ListView({
                         <button className="iact" title="Open folder" onClick={(e) => { e.stopPropagation(); onDrill(n); }}>{ICON_OPEN}</button>
                       )}
                       <button className="iact" title="Reveal in Finder" onClick={(e) => { e.stopPropagation(); onReveal(n); }}>{ICON_REVEAL}</button>
+                      <button className="iact" title="Open Terminal Here" onClick={(e) => { e.stopPropagation(); onTerminal(n); }}>{ICON_TERMINAL}</button>
                       <button className="iact danger" title="Move to Trash" onClick={(e) => { e.stopPropagation(); onTrashOne(n); }}>{ICON_TRASH}</button>
                     </span>
                   )}
@@ -756,9 +783,20 @@ function Treemap({
             key={i}
             className={cls}
             style={{ left: t.x, top: t.y, width: Math.max(0, t.w), height: Math.max(0, t.h), background: t.group ? undefined : color ?? undefined }}
-            title={t.group ? "Double-click to open" : t.node.name}
+            title={t.group ? "Double-click to view in tree view" : t.node.name}
             onMouseEnter={() => onHover(t.node)}
-            onClick={() => !t.group && onSelect(t.node)}
+            onClick={() => {
+              if (t.group) return;
+              if (isAgg) {
+                // Drill into the folder these folded-away items belong to; if the
+                // aggregate is already a direct child of the view, just select it.
+                const parent = parentOf(root, t.node);
+                if (parent && parent !== root) onDrill(parent);
+                else onSelect(t.node);
+              } else {
+                onSelect(t.node);
+              }
+            }}
             onDoubleClick={() => t.group && onDrill(t.node)}
           >
             {showLabel && (
@@ -921,7 +959,10 @@ const DupGroupCard = memo(function DupGroupCard({ group, home, onReveal, onTrash
           <div className={"dupfile" + (isKeep ? " keep" : "")} key={p}>
             <span className="df-path">{shortenPath(p, home)}</span>
             {isKeep ? (
-              <span className="df-tag">Keep</span>
+              <span className="df-act">
+                <span className="df-tag">Keep</span>
+                <button className="iact" title="Reveal in Finder (then Space to Quick Look)" onClick={() => onReveal(p)}>{ICON_REVEAL}</button>
+              </span>
             ) : (
               <span className="df-act">
                 <button className="iact" title="Reveal in Finder" onClick={() => onReveal(p)}>{ICON_REVEAL}</button>

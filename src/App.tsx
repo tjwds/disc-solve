@@ -3,9 +3,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Category, Node, ScanResult, TimeMachineStatus } from "./lib/types";
 import { squarify, type Tile } from "./lib/treemap";
 import { fmtBytes, fmtRelTime, isStale } from "./lib/format";
-import { reclaimable, type Suggestion } from "./lib/suggestions";
+import { reclaimable, largestDirNamed, largestDirOfCategory, type Suggestion } from "./lib/suggestions";
 import { typeStats, buildColorMap, colorForNode, type LegendEntry } from "./lib/filetypes";
-import { sortItems, resolveFilter, withoutAggregates, parentName, shortenPath, type SortKey, type SortDir } from "./lib/listview";
+import { sortItems, resolveFilter, collectByName, withoutAggregates, parentName, shortenPath, type SortKey, type SortDir } from "./lib/listview";
 import { removePaths } from "./lib/tree";
 import { makeDemoTree } from "./lib/demo";
 import * as api from "./lib/api";
@@ -27,7 +27,7 @@ const ICON_OPEN = (
 interface ScanEvent { files: number; bytes: number; total: number }
 interface ScanProgress { files: number; bytes: number; pct: number }
 type ViewMode = "treemap" | "list";
-interface ListSource { key: string; label: string; items: Node[]; nameFromParent: boolean }
+interface ListSource { key: string; label: string; nameFromParent: boolean }
 interface ConfirmData { title: string; detail: string; confirmLabel: string; onOk: () => void }
 
 function findChain(root: Node, targetPath: string): Node[] {
@@ -42,14 +42,19 @@ function findChain(root: Node, targetPath: string): Node[] {
   return dfs(root) ? chain : [root];
 }
 
-// Re-anchor a navigation stack into a freshly edited tree by path, falling back
-// to the deepest surviving ancestor (or the root) if a folder is now gone.
-function remapStack(tree: Node, old: Node[]): Node[] {
-  for (let i = old.length - 1; i >= 0; i--) {
-    const chain = findChain(tree, old[i].path);
-    if (chain[chain.length - 1].path === old[i].path) return chain;
+// Re-anchor a navigation stack into a freshly edited tree by path. Nodes present
+// in the (pruned) tree are re-anchored so their sizes update; folders that only
+// exist in the full tree (reached by drilling a fetched list row) are kept as-is.
+// Stops at an ancestor that was itself trashed.
+function remapStack(tree: Node, old: Node[], removed: string[] = []): Node[] {
+  const out: Node[] = [];
+  for (const node of old) {
+    if (removed.includes(node.path)) break;
+    const chain = findChain(tree, node.path);
+    const hit = chain[chain.length - 1];
+    out.push(hit.path === node.path ? hit : node);
   }
-  return [tree];
+  return out.length ? out : [tree];
 }
 
 export default function App() {
@@ -64,6 +69,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("treemap");
   const [listSource, setListSource] = useState<ListSource | null>(null);
+  const [listItems, setListItems] = useState<Node[]>([]);
+  const [listLoading, setListLoading] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "size", dir: "desc" });
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState<ConfirmData | null>(null);
@@ -136,40 +143,81 @@ export default function App() {
 
   const drill = useCallback(
     (node: Node) => {
-      if (!tree || node.children.length === 0) return;
-      setStack(findChain(tree, node.path));
+      if (!tree || !node.is_dir) return;
+      const chain = findChain(tree, node.path);
+      // Folders not in the pruned tree (reached via a fetched list row) aren't in
+      // `chain`; navigate to the fetched node directly so the list can load it.
+      if (chain[chain.length - 1].path === node.path) setStack(chain);
+      else setStack((s) => [...s, node]);
       setSelected(null);
       setListSource(null);
     },
     [tree],
   );
 
+  // Fetch a folder's full, unpruned children for the list view. In Tauri this
+  // comes from the backend (the UI holds only the pruned tree); in the browser
+  // demo the client tree is already complete, so read it directly.
+  const loadChildren = useCallback(
+    async (path: string): Promise<Node[]> => {
+      if (api.isTauri()) return api.listChildren(path);
+      if (!tree) return [];
+      const chain = findChain(tree, path);
+      const node = chain[chain.length - 1];
+      return node.path === path ? node.children : [];
+    },
+    [tree],
+  );
+
+  // Load the list view's rows whenever the view, active filter, or folder changes.
+  useEffect(() => {
+    if (view !== "list") return;
+    let cancelled = false;
+    (async () => {
+      setListLoading(true);
+      try {
+        let items: Node[] = [];
+        if (tree && listSource?.key === "node_modules") {
+          items = collectByName(tree, "node_modules"); // the folders to reclaim
+        } else {
+          const target =
+            listSource?.key === "caches" ? (tree ? largestDirOfCategory(tree, "cache")?.path : undefined)
+            : listSource?.key === "derived" ? (tree ? largestDirNamed(tree, "DerivedData")?.path : undefined)
+            : root?.path;
+          if (target) items = await loadChildren(target);
+        }
+        if (!cancelled) setListItems(withoutAggregates(items));
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      } finally {
+        if (!cancelled) setListLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [view, listSource, root?.path, tree, loadChildren]);
+
   const setViewMode = useCallback((m: ViewMode) => {
     setView(m);
     if (m === "list") setListSource(null); // manual List = current folder
   }, []);
 
-  const onRecommend = useCallback(
-    (s: Suggestion) => {
-      if (s.action === "openTrash") {
-        api.openTrash().catch((e) => setError(String(e)));
-        return;
-      }
-      if (s.action === "list" && tree) {
-        setListSource(resolveFilter(tree, s.key));
-        setView("list");
-      }
-    },
-    [tree],
-  );
+  const onRecommend = useCallback((s: Suggestion) => {
+    if (s.action === "openTrash") {
+      api.openTrash().catch((e) => setError(String(e)));
+      return;
+    }
+    if (s.action === "list") {
+      setListSource(resolveFilter(s.key));
+      setView("list");
+    }
+  }, []);
 
   const onSort = useCallback((key: SortKey) => {
     setSort((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: key === "name" ? "asc" : "desc" }));
   }, []);
 
-  // Aggregated "N smaller items" placeholders are a tree-view device; the list
-  // shows individual items only.
-  const listItems = withoutAggregates(listSource ? listSource.items : root?.children ?? []);
   const checkedNodes = listItems.filter((n) => n.path && checked.has(n.path));
   const checkedBytes = checkedNodes.reduce((s, n) => s + n.size, 0);
 
@@ -187,15 +235,16 @@ export default function App() {
     setChecked((s) => (paths.every((p) => s.has(p)) ? new Set() : new Set(paths)));
   }, [listItems]);
 
-  // Prune trashed paths from the in-memory tree (no re-scan) and re-anchor the
-  // navigation stack and any active filter into the updated tree.
+  // Prune trashed paths from the in-memory tree (no re-scan), drop them from the
+  // visible list, and re-anchor the navigation stack into the updated tree. The
+  // backend prunes its retained tree too, so a re-fetch stays consistent.
   const applyTrashed = useCallback(
     (paths: string[]) => {
       if (!scan || paths.length === 0) return;
-      const tree = removePaths(scan.tree, paths);
-      setScan({ ...scan, tree, files: tree.item_count });
-      setStack((s) => remapStack(tree, s));
-      setListSource((ls) => (ls?.key ? resolveFilter(tree, ls.key) : ls));
+      const next = removePaths(scan.tree, paths);
+      setScan({ ...scan, tree: next, files: next.item_count });
+      setStack((s) => remapStack(next, s, paths));
+      setListItems((items) => items.filter((n) => !paths.includes(n.path)));
       setSelected((sel) => (sel && paths.includes(sel.path) ? null : sel));
     },
     [scan],
@@ -256,6 +305,7 @@ export default function App() {
               )}
               <ListView
                 items={listItems}
+                loading={listLoading}
                 sort={sort}
                 onSort={onSort}
                 checked={checked}
@@ -426,7 +476,7 @@ function FilterBar({ label, count, bytes, onClear }: { label: string; count: num
         {label}
         <button className="x" title="Clear filter" onClick={onClear}>✕</button>
       </span>
-      <span className="right">{count} folder{count === 1 ? "" : "s"} · {fmtBytes(bytes)}</span>
+      <span className="right">{count} item{count === 1 ? "" : "s"} · {fmtBytes(bytes)}</span>
     </div>
   );
 }
@@ -442,9 +492,10 @@ function SortHead({ label, col, sort, onSort, cls }: { label: string; col: SortK
 }
 
 function ListView({
-  items, sort, onSort, checked, nameFromParent, home, onToggleCheck, onToggleAll, onDrill, onReveal, onTrashOne,
+  items, loading, sort, onSort, checked, nameFromParent, home, onToggleCheck, onToggleAll, onDrill, onReveal, onTrashOne,
 }: {
   items: Node[];
+  loading: boolean;
   sort: { key: SortKey; dir: SortDir };
   onSort: (k: SortKey) => void;
   checked: Set<string>;
@@ -471,7 +522,7 @@ function ListView({
         <SortHead label="Last modified" col="mtime" sort={sort} onSort={onSort} cls="lh-used" />
       </div>
       <div className="lbody">
-        {sorted.length === 0 && <div className="state">Nothing here.</div>}
+        {sorted.length === 0 && <div className="state">{loading ? "Loading…" : "Nothing here."}</div>}
         {sorted.map((n, i) => {
           const name = nameFromParent ? parentName(n.path) : n.name;
           const isChecked = !!n.path && checked.has(n.path);

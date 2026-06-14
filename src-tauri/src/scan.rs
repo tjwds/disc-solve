@@ -164,31 +164,31 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
     }
 }
 
-/// Collapse a scanned tree for display. Within each directory, keep the largest
-/// `max_children` entries that are at least `min_size`, and fold everything else
-/// into a single synthetic "N smaller items" node (with an empty path, so it is
-/// not actionable). On-disk totals and item counts are preserved exactly. This
-/// bounds the node count so the IPC payload and the treemap stay fast.
-pub fn prune(node: &mut Node, min_size: u64, max_children: usize) {
-    if node.children.is_empty() {
-        return;
-    }
-    node.children.sort_by(|a, b| b.size.cmp(&a.size));
+/// Build a *pruned copy* of a scanned tree for display, leaving the original
+/// intact. Within each directory, keep the largest `max_children` entries that
+/// are at least `min_size`, and fold everything else into a single synthetic
+/// "N smaller items" node (empty path, so it is not actionable). On-disk totals
+/// and item counts are preserved exactly. This bounds the node count so the IPC
+/// payload and the treemap stay fast.
+///
+/// The full tree is retained server-side (see [`find_dir`]) so the list view can
+/// fetch a folder's complete, unpruned contents one level at a time.
+pub fn pruned(node: &Node, min_size: u64, max_children: usize) -> Node {
+    let mut order: Vec<&Node> = node.children.iter().collect();
+    order.sort_by(|a, b| b.size.cmp(&a.size));
+
     let mut kept: Vec<Node> = Vec::new();
     let mut dropped_size = 0u64;
     let mut dropped_count = 0u64;
     let mut dropped_mtime = 0i64;
-    for (i, child) in std::mem::take(&mut node.children).into_iter().enumerate() {
+    for (i, child) in order.into_iter().enumerate() {
         if i < max_children && child.size >= min_size {
-            kept.push(child);
+            kept.push(pruned(child, min_size, max_children));
         } else {
             dropped_size += child.size;
             dropped_count += child.item_count;
             dropped_mtime = dropped_mtime.max(child.mtime);
         }
-    }
-    for child in kept.iter_mut() {
-        prune(child, min_size, max_children);
     }
     if dropped_size > 0 {
         kept.push(Node {
@@ -204,7 +204,76 @@ pub fn prune(node: &mut Node, min_size: u64, max_children: usize) {
         });
         kept.sort_by(|a, b| b.size.cmp(&a.size));
     }
-    node.children = kept;
+    Node {
+        name: node.name.clone(),
+        path: node.path.clone(),
+        size: node.size,
+        is_dir: node.is_dir,
+        is_symlink: node.is_symlink,
+        category: node.category,
+        item_count: node.item_count,
+        mtime: node.mtime,
+        children: kept,
+    }
+}
+
+/// A copy of `node` with its children dropped — one level, for list-view rows.
+pub fn shallow(node: &Node) -> Node {
+    Node {
+        name: node.name.clone(),
+        path: node.path.clone(),
+        size: node.size,
+        is_dir: node.is_dir,
+        is_symlink: node.is_symlink,
+        category: node.category,
+        item_count: node.item_count,
+        mtime: node.mtime,
+        children: vec![],
+    }
+}
+
+/// Find the node at `path` within `tree` (exact match), descending by path
+/// prefix. Returns `None` if absent. Synthetic aggregates (empty path) are
+/// skipped. Used to serve a folder's real children to the list view.
+pub fn find_dir<'a>(tree: &'a Node, path: &str) -> Option<&'a Node> {
+    if tree.path == path {
+        return Some(tree);
+    }
+    let mut cur = tree;
+    loop {
+        let next = cur.children.iter().find(|c| {
+            !c.path.is_empty() && (c.path == path || path.starts_with(&format!("{}/", c.path)))
+        })?;
+        if next.path == path {
+            return Some(next);
+        }
+        cur = next;
+    }
+}
+
+fn recompute(node: &mut Node) {
+    node.size = node.children.iter().map(|c| c.size).sum();
+    node.item_count = node.children.iter().map(|c| c.item_count).sum();
+    node.mtime = node.children.iter().map(|c| c.mtime).max().unwrap_or(node.mtime);
+}
+
+/// Remove the node at `path` from `tree`, recomputing each affected ancestor's
+/// size/count/mtime. Returns whether something was removed. Mirrors the
+/// frontend's `removePaths`, keeping the retained tree consistent after a trash.
+pub fn remove_path(tree: &mut Node, path: &str) -> bool {
+    let before = tree.children.len();
+    tree.children.retain(|c| c.path != path);
+    if tree.children.len() != before {
+        recompute(tree);
+        return true;
+    }
+    for child in &mut tree.children {
+        if !child.path.is_empty() && path.starts_with(&format!("{}/", child.path)) && remove_path(child, path) {
+            recompute(tree);
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -347,12 +416,12 @@ mod tests {
     }
 
     #[test]
-    fn prune_caps_children_and_preserves_total() {
+    fn pruned_caps_children_and_preserves_total() {
         let kids: Vec<Node> = (1..=10)
             .map(|i| synthetic_leaf(&format!("f{i}"), &format!("/f{i}"), i * 100))
             .collect();
         let total: u64 = kids.iter().map(|c| c.size).sum();
-        let mut root = Node {
+        let root = Node {
             name: "root".into(),
             path: "/".into(),
             size: total,
@@ -364,13 +433,14 @@ mod tests {
             children: kids,
         };
 
-        prune(&mut root, 1, 3);
+        let out = pruned(&root, 1, 3);
 
-        assert_eq!(root.children.len(), 4); // 3 kept + 1 aggregate
-        let new_total: u64 = root.children.iter().map(|c| c.size).sum();
+        assert_eq!(out.children.len(), 4); // 3 kept + 1 aggregate
+        let new_total: u64 = out.children.iter().map(|c| c.size).sum();
         assert_eq!(new_total, total, "prune must preserve the total");
-        let agg = root.children.iter().find(|c| c.path.is_empty()).unwrap();
+        let agg = out.children.iter().find(|c| c.path.is_empty()).unwrap();
         assert_eq!(agg.item_count, 7);
+        assert_eq!(root.children.len(), 10, "pruned must not mutate the original");
     }
 
     // Manual benchmark: `DS_BENCH_DIR=/path cargo test --lib bench_real_dir -- --ignored --nocapture`
@@ -394,8 +464,8 @@ mod tests {
     }
 
     #[test]
-    fn prune_folds_sub_threshold_entries() {
-        let mut root = Node {
+    fn pruned_folds_sub_threshold_entries() {
+        let root = Node {
             name: "root".into(),
             path: "/".into(),
             size: 1005,
@@ -410,10 +480,69 @@ mod tests {
             ],
         };
 
-        prune(&mut root, 100, 80);
+        let out = pruned(&root, 100, 80);
 
-        assert!(root.children.iter().any(|c| c.name == "big"));
-        let agg = root.children.iter().find(|c| c.path.is_empty()).unwrap();
+        assert!(out.children.iter().any(|c| c.name == "big"));
+        let agg = out.children.iter().find(|c| c.path.is_empty()).unwrap();
         assert_eq!(agg.size, 5);
+    }
+
+    fn dir_node(name: &str, path: &str, children: Vec<Node>) -> Node {
+        Node {
+            name: name.into(),
+            path: path.into(),
+            size: children.iter().map(|c| c.size).sum(),
+            is_dir: true,
+            is_symlink: false,
+            category: Category::Other,
+            item_count: children.iter().map(|c| c.item_count).sum(),
+            mtime: children.iter().map(|c| c.mtime).max().unwrap_or(0),
+            children,
+        }
+    }
+
+    #[test]
+    fn find_dir_locates_nested_paths() {
+        let tree = dir_node(
+            "root",
+            "/r",
+            vec![dir_node(
+                "sub",
+                "/r/sub",
+                vec![synthetic_leaf("a", "/r/sub/a", 10)],
+            )],
+        );
+        assert_eq!(find_dir(&tree, "/r").unwrap().path, "/r");
+        assert_eq!(find_dir(&tree, "/r/sub").unwrap().path, "/r/sub");
+        assert_eq!(find_dir(&tree, "/r/sub/a").unwrap().path, "/r/sub/a");
+        assert!(find_dir(&tree, "/r/nope").is_none());
+    }
+
+    #[test]
+    fn remove_path_removes_and_recomputes_ancestors() {
+        let mut tree = dir_node(
+            "root",
+            "/r",
+            vec![
+                synthetic_leaf("a", "/r/a", 100),
+                dir_node(
+                    "sub",
+                    "/r/sub",
+                    vec![
+                        synthetic_leaf("b", "/r/sub/b", 50),
+                        synthetic_leaf("c", "/r/sub/c", 70),
+                    ],
+                ),
+            ],
+        );
+        assert_eq!(tree.size, 220);
+
+        assert!(remove_path(&mut tree, "/r/sub/b"));
+        assert_eq!(tree.size, 170, "ancestors recompute after removal");
+        let sub = find_dir(&tree, "/r/sub").unwrap();
+        assert_eq!(sub.size, 70);
+        assert_eq!(sub.children.len(), 1);
+
+        assert!(!remove_path(&mut tree, "/r/missing"), "absent path removes nothing");
     }
 }

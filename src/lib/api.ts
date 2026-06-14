@@ -1,7 +1,7 @@
 // Thin wrappers over the Tauri command surface (src-tauri/src/lib.rs).
 
 import { invoke } from "@tauri-apps/api/core";
-import type { ScanResult, TimeMachineStatus } from "./types";
+import type { Node, ScanResult, TimeMachineStatus } from "./types";
 
 /** True when running inside the Tauri shell (vs. a plain browser dev preview). */
 export function isTauri(): boolean {
@@ -10,6 +10,11 @@ export function isTauri(): boolean {
 
 export function scanPath(path: string): Promise<ScanResult> {
   return invoke("scan_path", { path });
+}
+
+/** The real, unpruned direct children of a folder from the last scan (one level). */
+export function listChildren(path: string): Promise<Node[]> {
+  return invoke("list_children", { path });
 }
 
 export function homeDir(): Promise<string | null> {

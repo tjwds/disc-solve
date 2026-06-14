@@ -48,11 +48,14 @@ fn volume_used_bytes(path: &Path) -> u64 {
     }
 }
 
-/// The root of the most recent scan. `move_to_trash` refuses any target that is
-/// not inside this, so the frontend can never ask us to trash an arbitrary path.
+/// State from the most recent scan. `move_to_trash` refuses any target that is
+/// not inside `scan_root`, so the frontend can never ask us to trash an arbitrary
+/// path. `tree` retains the full, unpruned scan so the list view can fetch a
+/// folder's complete contents (the treemap gets a pruned copy over IPC).
 #[derive(Default)]
 struct AppState {
     scan_root: Mutex<Option<PathBuf>>,
+    tree: Mutex<Option<scan::Node>>,
 }
 
 #[derive(serde::Serialize)]
@@ -103,12 +106,10 @@ async fn scan_path(
     });
 
     let scan_progress = progress.clone();
-    let (tree, files, dirs, errors) = tauri::async_runtime::spawn_blocking(move || {
-        let mut tree = scan::scan(&target, &scan_progress);
-        let min_size = (tree.size / 20_000).max(1_048_576); // >= 1 MB, ~0.005% of total
-        scan::prune(&mut tree, min_size, 80);
+    let (full, files, dirs, errors) = tauri::async_runtime::spawn_blocking(move || {
+        let full = scan::scan(&target, &scan_progress);
         (
-            tree,
+            full,
             scan_progress.files.load(Ordering::Relaxed),
             scan_progress.dirs_scanned.load(Ordering::Relaxed),
             scan_progress.errors.load(Ordering::Relaxed),
@@ -120,8 +121,23 @@ async fn scan_path(
     done.store(true, Ordering::Relaxed);
     let _ = poller.join();
 
+    // Pruned copy crosses to the UI for the treemap; the full tree stays here so
+    // the list view can request any folder's complete contents.
+    let min_size = (full.size / 20_000).max(1_048_576); // >= 1 MB, ~0.005% of total
+    let tree = scan::pruned(&full, min_size, 80);
+    *state.tree.lock().unwrap() = Some(full);
     *state.scan_root.lock().unwrap() = Some(p);
     Ok(ScanResult { tree, files, dirs, errors })
+}
+
+/// Returns the real, unpruned direct children of the directory at `path` from the
+/// retained scan (one level, children stripped) for the list view. Read-only.
+#[tauri::command]
+fn list_children(state: State<AppState>, path: String) -> Result<Vec<scan::Node>, String> {
+    let guard = state.tree.lock().unwrap();
+    let tree = guard.as_ref().ok_or("Scan a folder first")?;
+    let dir = scan::find_dir(tree, &path).ok_or("Folder not found in the last scan")?;
+    Ok(dir.children.iter().map(scan::shallow).collect())
 }
 
 #[tauri::command]
@@ -132,7 +148,12 @@ fn move_to_trash(state: State<AppState>, path: String) -> Result<String, String>
         .unwrap()
         .clone()
         .ok_or("Scan a folder before trashing anything")?;
-    actions::move_to_trash(&PathBuf::from(path), &root, &actions::SystemTrasher)
+    let result = actions::move_to_trash(&PathBuf::from(&path), &root, &actions::SystemTrasher)?;
+    // Keep the retained tree in sync so a re-fetched list reflects the removal.
+    if let Some(tree) = state.tree.lock().unwrap().as_mut() {
+        scan::remove_path(tree, &path);
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -175,6 +196,7 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             scan_path,
+            list_children,
             move_to_trash,
             reveal_in_finder,
             open_terminal_here,

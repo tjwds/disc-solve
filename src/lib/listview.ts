@@ -2,7 +2,6 @@
 // helpers. Pure and unit-tested. The UI lives in App.tsx.
 
 import type { Node } from "./types";
-import { largestDirNamed, largestDirOfCategory } from "./suggestions";
 
 export type SortKey = "name" | "size" | "items" | "mtime";
 export type SortDir = "asc" | "desc";
@@ -47,25 +46,25 @@ export function collectByName(root: Node, name: string): Node[] {
   return out;
 }
 
-export interface FilterResult {
+export interface FilterMeta {
   key: string;
   label: string;
-  items: Node[];
   /** When true, show each row by its parent folder name (e.g. the project), not its own. */
   nameFromParent: boolean;
 }
 
-/** Resolve a recommendation's filter key to a concrete set of folders to list. */
-export function resolveFilter(root: Node, key: string): FilterResult {
+/** Display metadata for a recommendation's filter. The items themselves are
+ *  fetched separately (unpruned) so the list shows a folder's full contents. */
+export function resolveFilter(key: string): FilterMeta {
   switch (key) {
     case "node_modules":
-      return { key, label: "node_modules", items: collectByName(root, "node_modules"), nameFromParent: true };
+      return { key, label: "node_modules", nameFromParent: true };
     case "derived":
-      return { key, label: "Xcode DerivedData", items: largestDirNamed(root, "DerivedData")?.children ?? [], nameFromParent: false };
+      return { key, label: "Xcode DerivedData", nameFromParent: false };
     case "caches":
-      return { key, label: "Caches", items: largestDirOfCategory(root, "cache")?.children ?? [], nameFromParent: false };
+      return { key, label: "Caches", nameFromParent: false };
     default:
-      return { key, label: key, items: [], nameFromParent: false };
+      return { key, label: key, nameFromParent: false };
   }
 }
 

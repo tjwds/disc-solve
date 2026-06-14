@@ -51,18 +51,10 @@ describe("collectByName + resolveFilter", () => {
   it("collects all node_modules folders", () => {
     expect(collectByName(tree, "node_modules").length).toBe(2);
   });
-  it("resolves the node_modules filter with parent-name display", () => {
-    const r = resolveFilter(tree, "node_modules");
-    expect(r.label).toBe("node_modules");
-    expect(r.items.length).toBe(2);
-    expect(r.nameFromParent).toBe(true);
-  });
-  it("resolves caches to the cache folder's children", () => {
-    // The Caches dir has category "other" here; build one categorized as cache:
-    const t = dir("home", [dir("Caches", [leaf("Safari", 500), leaf("Chrome", 300)], "/home/Caches")]);
-    (t.children[0] as Node).category = "cache";
-    const r = resolveFilter(t, "caches");
-    expect(r.items.map((i) => i.name).sort()).toEqual(["Chrome", "Safari"]);
+  it("resolves filter display metadata by key", () => {
+    expect(resolveFilter("node_modules")).toEqual({ key: "node_modules", label: "node_modules", nameFromParent: true });
+    expect(resolveFilter("derived")).toEqual({ key: "derived", label: "Xcode DerivedData", nameFromParent: false });
+    expect(resolveFilter("caches").label).toBe("Caches");
   });
 });
 

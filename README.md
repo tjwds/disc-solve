@@ -4,6 +4,19 @@ A modern, open-source disk-usage steward for macOS — the spiritual successor t
 Disk Inventory X, with organization and backup awareness. Built on
 [Tauri](https://tauri.app/) (Rust backend, React/TypeScript frontend).
 
+![disc-solve's treemap view: a colour-coded map of disk usage, with a dashboard sidebar showing the type breakdown, Time Machine status, and reclaimable suggestions](./assets/disc-solve.png)
+
+A recommendation opens as a filtered, sortable list — here, every project's
+`node_modules` across the disk, with on-disk size, item count, and how stale each
+one is, ready to move to the Trash:
+
+![disc-solve's list view filtered to node_modules folders, with size bars and last-modified staleness](./assets/list-view.png)
+
+> The screenshots above are generated from fabricated demo data (`makeDemoTree`
+> in `src/lib/demo.ts`) — never a real disk — by `npm run screenshot`, which
+> builds the UI, serves it, and captures it with headless Chrome. See
+> [`scripts/screenshot.sh`](./scripts/screenshot.sh).
+
 ## Safety
 
 The app is read-only by default and treats deletion with caution:
@@ -47,7 +60,11 @@ cargo test --manifest-path src-tauri/Cargo.toml   # scanner, safety guard, actio
 - `src-tauri/src/backup.rs` — Time Machine snapshot/last-backup reporting via `tmutil`.
 - `src/lib/treemap.ts` — squarified treemap layout (pure, tested).
 - `src/lib/suggestions.ts` — per-category totals and reclaimable suggestions from a scan.
-- `src/App.tsx` — the UI: sidebar dashboard, drill-down treemap, breadcrumb, inspector.
+- `src/lib/listview.ts` — list-view sorting and recommendation filters. The treemap
+  payload is pruned for size, but the backend retains the full scan so the list view
+  fetches any folder's complete contents on demand (`list_children`).
+- `src/App.tsx` — the UI: sidebar dashboard, drill-down treemap, breadcrumb, inspector,
+  and the filtered list view.
 
 ## License
 

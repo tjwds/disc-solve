@@ -113,6 +113,11 @@ export default function App() {
       setStack([demo]);
       setHome("/demo");
       setTm({ local_snapshots: 3, latest_backup: "/Volumes/Backups" });
+      // Demo-only: the screenshot generator opens a view via URL hash
+      // (#list, #filter=node_modules). Ignored by the real (Tauri) app.
+      const f = /filter=([\w-]+)/.exec(window.location.hash);
+      if (f) { setListSource(resolveFilter(f[1])); setView("list"); }
+      else if (window.location.hash.includes("list")) setView("list");
       return;
     }
     (async () => {

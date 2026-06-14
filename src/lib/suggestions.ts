@@ -107,7 +107,7 @@ export function reclaimable(root: Node): Suggestion[] {
 
   const caches = sumCategory(root, "cache");
   if (caches > 0) {
-    out.push({ key: "caches", title: "Caches", subtitle: "Safe to clear; apps rebuild them", bytes: caches, action: "list" });
+    out.push({ key: "caches", title: "Caches", subtitle: "App caches, usually rebuilt as needed", bytes: caches, action: "list" });
   }
 
   const trash = sumCategory(root, "trash");

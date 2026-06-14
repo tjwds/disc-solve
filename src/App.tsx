@@ -6,6 +6,7 @@ import { fmtBytes, fmtRelTime, isStale } from "./lib/format";
 import { reclaimable, type Suggestion } from "./lib/suggestions";
 import { typeStats, buildColorMap, colorForNode, type LegendEntry } from "./lib/filetypes";
 import { sortItems, resolveFilter, parentName, shortenPath, type SortKey, type SortDir } from "./lib/listview";
+import { removePaths } from "./lib/tree";
 import { makeDemoTree } from "./lib/demo";
 import * as api from "./lib/api";
 
@@ -39,6 +40,16 @@ function findChain(root: Node, targetPath: string): Node[] {
     return false;
   };
   return dfs(root) ? chain : [root];
+}
+
+// Re-anchor a navigation stack into a freshly edited tree by path, falling back
+// to the deepest surviving ancestor (or the root) if a folder is now gone.
+function remapStack(tree: Node, old: Node[]): Node[] {
+  for (let i = old.length - 1; i >= 0; i--) {
+    const chain = findChain(tree, old[i].path);
+    if (chain[chain.length - 1].path === old[i].path) return chain;
+  }
+  return [tree];
 }
 
 export default function App() {
@@ -174,27 +185,19 @@ export default function App() {
     setChecked((s) => (paths.every((p) => s.has(p)) ? new Set() : new Set(paths)));
   }, [listItems]);
 
-  // Re-scan after a change, re-applying the active filter so the list updates in place.
-  const refresh = useCallback(async () => {
-    if (stack.length === 0) return;
-    const activeKey = listSource?.key ?? null;
-    setLoading(true);
-    setError(null);
-    setProgress(null);
-    try {
-      const result = await api.scanPath(stack[0].path);
-      setScan(result);
-      setStack([result.tree]);
-      setSelected(null);
-      setChecked(new Set());
-      setListSource(activeKey ? resolveFilter(result.tree, activeKey) : null);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-      setProgress(null);
-    }
-  }, [stack, listSource]);
+  // Prune trashed paths from the in-memory tree (no re-scan) and re-anchor the
+  // navigation stack and any active filter into the updated tree.
+  const applyTrashed = useCallback(
+    (paths: string[]) => {
+      if (!scan || paths.length === 0) return;
+      const tree = removePaths(scan.tree, paths);
+      setScan({ ...scan, tree, files: tree.item_count });
+      setStack((s) => remapStack(tree, s));
+      setListSource((ls) => (ls?.key ? resolveFilter(tree, ls.key) : ls));
+      setSelected((sel) => (sel && paths.includes(sel.path) ? null : sel));
+    },
+    [scan],
+  );
 
   const trashPaths = useCallback(
     (paths: string[], label: string) => {
@@ -204,16 +207,22 @@ export default function App() {
         detail: "It goes to the macOS Trash (recoverable) — nothing is permanently deleted.",
         confirmLabel: "Move to Trash",
         onOk: async () => {
+          // Apply whatever actually reached the Trash, even on a mid-loop error.
+          const done: string[] = [];
           try {
-            for (const p of paths) await api.moveToTrash(p);
-            await refresh();
+            for (const p of paths) {
+              await api.moveToTrash(p);
+              done.push(p);
+            }
           } catch (e) {
             setError(String(e));
+          } finally {
+            if (done.length) applyTrashed(done);
           }
         },
       });
     },
-    [stack, refresh],
+    [stack, applyTrashed],
   );
 
   const onTreemapTrash = useCallback(() => {

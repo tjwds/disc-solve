@@ -27,6 +27,9 @@ libc = "0.2"
 # Content hashing for duplicate detection. Cryptographic + fast, so identical
 # hashes mean identical files (no false-positive "duplicates" driving a delete).
 blake3 = "1"
+# MPMC channels: stream files from the scan walk into the duplicate-hashing
+# workers so hashing overlaps the walk instead of waiting for it to finish.
+crossbeam-channel = "0.5"
 
 [dev-dependencies]
 tempfile = "3"

@@ -67,9 +67,12 @@ cargo test --manifest-path src-tauri/Cargo.toml   # scanner, safety guard, actio
   the guarded Move to Trash (with a mockable `Trasher` so tests never touch real files).
 - `src-tauri/src/category.rs` — file-type classification used for treemap colors.
 - `src-tauri/src/backup.rs` — Time Machine snapshot/last-backup reporting via `tmutil`.
-- `src-tauri/src/dups.rs` — duplicate detection: size-bucket from the retained scan,
-  then BLAKE3-hash only files that share a size. Runs on a background thread (after
-  the tree renders), emits `dup-progress`, and cancels if a new scan starts.
+- `src-tauri/src/dups.rs` — duplicate detection. The scan streams every file into a
+  `Pipeline` that buckets by size; the moment a size has a second file, those become
+  candidates and a small pool of worker threads BLAKE3-hashes them — so hashing
+  overlaps the disk walk instead of waiting for it. Files with the same `(size, hash)`
+  are duplicates. Emits `dup-progress`; cancels (via a generation counter) if a new
+  scan starts. `find_duplicates` just waits for the streamed hashing to drain.
 - `src/lib/treemap.ts` — squarified treemap layout (pure, tested).
 - `src/lib/suggestions.ts` — per-category totals and reclaimable suggestions from a scan.
 - `src/lib/listview.ts` — list-view sorting and recommendation filters. The treemap

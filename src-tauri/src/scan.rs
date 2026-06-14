@@ -48,9 +48,17 @@ pub struct Progress {
     pub errors: AtomicU64,
 }
 
+/// Receives every regular file as the walk encounters it, so a streaming consumer
+/// (duplicate detection) can start work while the walk is still running. Called
+/// from many threads at once, hence `Sync`.
+pub trait FileSink: Sync {
+    fn file(&self, path: &str, size: u64);
+}
+
 struct Ctx<'a> {
     seen_inodes: Mutex<HashSet<(u64, u64)>>,
     progress: &'a Progress,
+    sink: Option<&'a dyn FileSink>,
 }
 
 fn name_of(path: &Path) -> String {
@@ -74,12 +82,15 @@ fn leaf(path: &Path, size: u64, is_symlink: bool, category: Category, mtime: i64
     }
 }
 
-/// Recursively scan `path` in parallel, updating `progress` as it goes. Returns
-/// a node even on error (size 0) so a single unreadable entry never aborts.
-pub fn scan(path: &Path, progress: &Progress) -> Node {
+/// Recursively scan `path` in parallel, reporting each regular file to `sink`
+/// (if any) as it is found, so a streaming consumer can run concurrently with
+/// the walk. Updates `progress` as it goes and returns a node even on error
+/// (size 0), so a single unreadable entry never aborts.
+pub fn scan_with_sink(path: &Path, progress: &Progress, sink: Option<&dyn FileSink>) -> Node {
     let ctx = Ctx {
         seen_inodes: Mutex::new(HashSet::new()),
         progress,
+        sink,
     };
     walk(path, &ctx)
 }
@@ -160,7 +171,23 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
         }
         ctx.progress.files.fetch_add(1, Ordering::Relaxed);
         ctx.progress.bytes.fetch_add(size, Ordering::Relaxed);
-        leaf(path, size, false, categorize(path, false), meta.mtime())
+        // Build the path string once and hand it to the streaming sink (if any),
+        // so duplicate detection can begin hashing this file during the walk.
+        let path_str = path.display().to_string();
+        if let Some(sink) = ctx.sink {
+            sink.file(&path_str, size);
+        }
+        Node {
+            name: name_of(path),
+            path: path_str,
+            size,
+            is_dir: false,
+            is_symlink: false,
+            category: categorize(path, false),
+            item_count: 1,
+            mtime: meta.mtime(),
+            children: vec![],
+        }
     }
 }
 
@@ -284,6 +311,11 @@ mod tests {
     use std::io::Write;
     use std::path::PathBuf;
 
+    /// The tests don't stream files, so scan without a sink.
+    fn scan(path: &Path, progress: &Progress) -> Node {
+        scan_with_sink(path, progress, None)
+    }
+
     fn write_file(path: &Path, bytes: usize) {
         let mut f = File::create(path).unwrap();
         f.write_all(&vec![b'x'; bytes]).unwrap();
@@ -375,6 +407,31 @@ mod tests {
         let after = snapshot(root);
 
         assert_eq!(before, after, "scan must not create, delete, or modify anything");
+    }
+
+    #[test]
+    fn scan_streams_regular_files_to_the_sink() {
+        struct Collect(std::sync::Mutex<Vec<(String, u64)>>);
+        impl FileSink for Collect {
+            fn file(&self, path: &str, size: u64) {
+                self.0.lock().unwrap().push((path.to_string(), size));
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_file(&root.join("a.bin"), 200_000);
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        write_file(&sub.join("b.bin"), 50_000);
+
+        let sink = Collect(std::sync::Mutex::new(Vec::new()));
+        let _ = scan_with_sink(root, &Progress::default(), Some(&sink));
+
+        let mut got = sink.0.into_inner().unwrap();
+        got.sort();
+        let names: Vec<&str> = got.iter().map(|(p, _)| p.rsplit('/').next().unwrap()).collect();
+        assert_eq!(names, vec!["a.bin", "b.bin"], "every regular file is streamed, dirs are not");
     }
 
     #[test]

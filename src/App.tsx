@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Category, DupGroup, DupReport, Node, ScanResult, TimeMachineStatus } from "./lib/types";
 import { squarify, type Tile } from "./lib/treemap";
@@ -353,6 +353,7 @@ export default function App() {
                 <Breadcrumb stack={stack} onJump={(i) => setStack(stack.slice(0, i + 1))} />
               )}
               <ListView
+                key={listSource ? `f:${listSource.key}` : `d:${root.path}`}
                 items={listItems}
                 loading={listLoading}
                 sort={sort}
@@ -602,6 +603,9 @@ function SortHead({ label, col, sort, onSort, cls }: { label: string; col: SortK
   );
 }
 
+const ROW_H = 46; // .lrow height (px); rows are fixed-height, so the list can be windowed
+const ROW_OVERSCAN = 8;
+
 function ListView({
   items, loading, sort, onSort, checked, nameFromParent, home, onToggleCheck, onToggleAll, onDrill, onReveal, onTrashOne,
 }: {
@@ -623,6 +627,32 @@ function ListView({
   const checkable = sorted.filter((n) => n.path);
   const allChecked = checkable.length > 0 && checkable.every((n) => checked.has(n.path));
 
+  // Window the body: only the rows in view are in the DOM, so a folder with
+  // thousands of items opens instantly and scrolls smoothly. Folder/filter
+  // changes remount this (a `key` upstream); re-sorting jumps back to the top.
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(640);
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const measure = () => setViewport(el.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+    setScrollTop(0);
+  }, [sort]);
+
+  const total = sorted.length;
+  const maxScroll = Math.max(0, total * ROW_H - viewport);
+  const st = Math.min(scrollTop, maxScroll); // tolerate a stale scrollTop after items shrink
+  const start = Math.max(0, Math.floor(st / ROW_H) - ROW_OVERSCAN);
+  const end = Math.min(total, Math.ceil((st + viewport) / ROW_H) + ROW_OVERSCAN);
+
   return (
     <div className="listwrap">
       <div className="lhead">
@@ -632,45 +662,52 @@ function ListView({
         <SortHead label="Items" col="items" sort={sort} onSort={onSort} cls="lh-items" />
         <SortHead label="Last modified" col="mtime" sort={sort} onSort={onSort} cls="lh-used" />
       </div>
-      <div className="lbody">
-        {sorted.length === 0 && <div className="state">{loading ? "Loading…" : "Nothing here."}</div>}
-        {sorted.map((n, i) => {
-          const name = nameFromParent ? parentName(n.path) : n.name;
-          const isChecked = !!n.path && checked.has(n.path);
-          const stale = isStale(n.mtime);
-          return (
-            <div
-              key={n.path || i}
-              className={"lrow" + (isChecked ? " sel" : "")}
-              onClick={(e) => {
-                if ((e.target as HTMLElement).closest("input,button")) return;
-                if (n.path) onToggleCheck(n.path);
-              }}
-              onDoubleClick={() => n.is_dir && onDrill(n)}
-            >
-              <span className="l-check"><input type="checkbox" checked={isChecked} disabled={!n.path} onChange={() => n.path && onToggleCheck(n.path)} /></span>
-              <span className="l-name">
-                <i className="dot" style={{ background: CAT_COLOR[n.category] }} />
-                <span className="nm"><span className="t">{name}</span><small>{shortenPath(n.path, home) || "aggregated"}</small></span>
-              </span>
-              <span className="l-size">
-                <span className="szbar"><span className="szfill" style={{ width: `${Math.round((n.size / maxSize) * 100)}%`, background: CAT_COLOR[n.category] }} /></span>
-                <b>{fmtBytes(n.size)}</b>
-              </span>
-              <span className="l-items">{n.item_count.toLocaleString()}</span>
-              <span className={"l-used" + (stale ? " stale" : "")}>{fmtRelTime(n.mtime)}</span>
-              {n.path && (
-                <span className="l-act">
-                  {n.is_dir && (
-                    <button className="iact" title="Open folder" onClick={(e) => { e.stopPropagation(); onDrill(n); }}>{ICON_OPEN}</button>
+      <div className="lbody" ref={bodyRef} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
+        {total === 0 ? (
+          <div className="state">{loading ? "Loading…" : "Nothing here."}</div>
+        ) : (
+          <>
+            <div style={{ height: start * ROW_H }} />
+            {sorted.slice(start, end).map((n) => {
+              const name = nameFromParent ? parentName(n.path) : n.name;
+              const isChecked = !!n.path && checked.has(n.path);
+              const stale = isStale(n.mtime);
+              return (
+                <div
+                  key={n.path}
+                  className={"lrow" + (isChecked ? " sel" : "")}
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).closest("input,button")) return;
+                    if (n.path) onToggleCheck(n.path);
+                  }}
+                  onDoubleClick={() => n.is_dir && onDrill(n)}
+                >
+                  <span className="l-check"><input type="checkbox" checked={isChecked} disabled={!n.path} onChange={() => n.path && onToggleCheck(n.path)} /></span>
+                  <span className="l-name">
+                    <i className="dot" style={{ background: CAT_COLOR[n.category] }} />
+                    <span className="nm"><span className="t">{name}</span><small>{shortenPath(n.path, home) || "aggregated"}</small></span>
+                  </span>
+                  <span className="l-size">
+                    <span className="szbar"><span className="szfill" style={{ width: `${Math.round((n.size / maxSize) * 100)}%`, background: CAT_COLOR[n.category] }} /></span>
+                    <b>{fmtBytes(n.size)}</b>
+                  </span>
+                  <span className="l-items">{n.item_count.toLocaleString()}</span>
+                  <span className={"l-used" + (stale ? " stale" : "")}>{fmtRelTime(n.mtime)}</span>
+                  {n.path && (
+                    <span className="l-act">
+                      {n.is_dir && (
+                        <button className="iact" title="Open folder" onClick={(e) => { e.stopPropagation(); onDrill(n); }}>{ICON_OPEN}</button>
+                      )}
+                      <button className="iact" title="Reveal in Finder" onClick={(e) => { e.stopPropagation(); onReveal(n); }}>{ICON_REVEAL}</button>
+                      <button className="iact danger" title="Move to Trash" onClick={(e) => { e.stopPropagation(); onTrashOne(n); }}>{ICON_TRASH}</button>
+                    </span>
                   )}
-                  <button className="iact" title="Reveal in Finder" onClick={(e) => { e.stopPropagation(); onReveal(n); }}>{ICON_REVEAL}</button>
-                  <button className="iact danger" title="Move to Trash" onClick={(e) => { e.stopPropagation(); onTrashOne(n); }}>{ICON_TRASH}</button>
-                </span>
-              )}
-            </div>
-          );
-        })}
+                </div>
+              );
+            })}
+            <div style={{ height: (total - end) * ROW_H }} />
+          </>
+        )}
       </div>
     </div>
   );

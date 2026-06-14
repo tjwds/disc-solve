@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Category, DupReport, Node, ScanResult, TimeMachineStatus } from "./lib/types";
+import type { Category, DupGroup, DupReport, Node, ScanResult, TimeMachineStatus } from "./lib/types";
 import { squarify, type Tile } from "./lib/treemap";
 import { fmtBytes, fmtRelTime, isStale } from "./lib/format";
 import { reclaimable, largestDirNamed, largestDirOfCategory, type Suggestion } from "./lib/suggestions";
@@ -804,6 +804,8 @@ function ListInspector({ count, bytes, onReveal, onTrash }: { count: number; byt
   );
 }
 
+const DUP_CHUNK = 24; // duplicate sets rendered per frame, so the tab opens instantly
+
 function DupsView({ report, scanning, progress, home, onReveal, onTrashPaths }: {
   report: DupReport | null;
   scanning: boolean;
@@ -813,6 +815,15 @@ function DupsView({ report, scanning, progress, home, onReveal, onTrashPaths }: 
   onTrashPaths: (paths: string[], label: string) => void;
 }) {
   const groups = report?.groups ?? [];
+  // A big duplicate set can be a lot of DOM; render it a chunk at a time so
+  // switching to this tab paints the top sets immediately and fills in the rest.
+  const [shown, setShown] = useState(DUP_CHUNK);
+  useEffect(() => setShown(DUP_CHUNK), [report]);
+  useEffect(() => {
+    if (shown >= groups.length) return;
+    const id = requestAnimationFrame(() => setShown((s) => s + DUP_CHUNK));
+    return () => cancelAnimationFrame(id);
+  }, [shown, groups.length]);
 
   if (scanning) {
     const has = progress && progress.total > 0;
@@ -841,41 +852,51 @@ function DupsView({ report, scanning, progress, home, onReveal, onTrashPaths }: 
         <span className="right">{groups.length} set{groups.length === 1 ? "" : "s"} · {fmtBytes(report!.reclaimable)} reclaimable</span>
       </div>
       <div className="dupbody">
-        {groups.map((g, gi) => {
-          const keep = keeperOf(g);
-          const extras = g.paths.filter((p) => p !== keep);
-          return (
-            <div className="dupgroup" key={gi}>
-              <div className="dg-head">
-                <span className="dg-name">{baseName(keep)}</span>
-                <span className="dg-meta">{fmtBytes(g.size)} each · {g.paths.length} copies · reclaim {fmtBytes(g.reclaimable)}</span>
-                <button className="btn danger sm" onClick={() => onTrashPaths(extras, `${extras.length} extra cop${extras.length === 1 ? "y" : "ies"} of ${baseName(keep)} (${fmtBytes(g.reclaimable)})`)}>
-                  Trash {extras.length} extra{extras.length === 1 ? "" : "s"}
-                </button>
-              </div>
-              {g.paths.map((p) => {
-                const isKeep = p === keep;
-                return (
-                  <div className={"dupfile" + (isKeep ? " keep" : "")} key={p}>
-                    <span className="df-path">{shortenPath(p, home)}</span>
-                    {isKeep ? (
-                      <span className="df-tag">Keep</span>
-                    ) : (
-                      <span className="df-act">
-                        <button className="iact" title="Reveal in Finder" onClick={() => onReveal(p)}>{ICON_REVEAL}</button>
-                        <button className="iact danger" title="Move to Trash" onClick={() => onTrashPaths([p], `${baseName(p)} (${fmtBytes(g.size)})`)}>{ICON_TRASH}</button>
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
+        {groups.slice(0, shown).map((g, gi) => (
+          <DupGroupCard key={g.paths[0] || gi} group={g} home={home} onReveal={onReveal} onTrashPaths={onTrashPaths} />
+        ))}
       </div>
     </div>
   );
 }
+
+// Memoized so progressively revealing more sets re-renders only the new cards.
+const DupGroupCard = memo(function DupGroupCard({ group, home, onReveal, onTrashPaths }: {
+  group: DupGroup;
+  home: string | null;
+  onReveal: (path: string) => void;
+  onTrashPaths: (paths: string[], label: string) => void;
+}) {
+  const keep = keeperOf(group);
+  const extras = group.paths.filter((p) => p !== keep);
+  return (
+    <div className="dupgroup">
+      <div className="dg-head">
+        <span className="dg-name">{baseName(keep)}</span>
+        <span className="dg-meta">{fmtBytes(group.size)} each · {group.paths.length} copies · reclaim {fmtBytes(group.reclaimable)}</span>
+        <button className="btn danger sm" onClick={() => onTrashPaths(extras, `${extras.length} extra cop${extras.length === 1 ? "y" : "ies"} of ${baseName(keep)} (${fmtBytes(group.reclaimable)})`)}>
+          Trash {extras.length} extra{extras.length === 1 ? "" : "s"}
+        </button>
+      </div>
+      {group.paths.map((p) => {
+        const isKeep = p === keep;
+        return (
+          <div className={"dupfile" + (isKeep ? " keep" : "")} key={p}>
+            <span className="df-path">{shortenPath(p, home)}</span>
+            {isKeep ? (
+              <span className="df-tag">Keep</span>
+            ) : (
+              <span className="df-act">
+                <button className="iact" title="Reveal in Finder" onClick={() => onReveal(p)}>{ICON_REVEAL}</button>
+                <button className="iact danger" title="Move to Trash" onClick={() => onTrashPaths([p], `${baseName(p)} (${fmtBytes(group.size)})`)}>{ICON_TRASH}</button>
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+});
 
 function DupsInspector({ report, scanning }: { report: DupReport | null; scanning: boolean }) {
   const sets = report?.groups.length ?? 0;

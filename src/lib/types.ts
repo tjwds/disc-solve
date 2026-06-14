@@ -38,3 +38,17 @@ export interface TimeMachineStatus {
   local_snapshots: number;
   latest_backup: string | null;
 }
+
+/** One set of byte-identical files (same on-disk `size`). */
+export interface DupGroup {
+  size: number;
+  paths: string[];
+  /** Bytes freed by reclaiming all but one copy: `size * (paths.length - 1)`. */
+  reclaimable: number;
+}
+
+export interface DupReport {
+  groups: DupGroup[];
+  reclaimable: number;
+  hashed: number;
+}

@@ -100,6 +100,7 @@ shoot() { # url-hash out-name label
 
 shoot "" "disc-solve" "treemap"
 shoot "#filter=node_modules" "list-view" "reclaim list"
+shoot "#dups" "duplicates" "duplicates"
 
 echo "Done:"
-for f in disc-solve list-view; do magick identify -format "  assets/%f  %wx%h\n" "$OUT_DIR/$f.png"; done
+for f in disc-solve list-view duplicates; do magick identify -format "  assets/%f  %wx%h\n" "$OUT_DIR/$f.png"; done

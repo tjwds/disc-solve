@@ -1,7 +1,7 @@
 // Thin wrappers over the Tauri command surface (src-tauri/src/lib.rs).
 
 import { invoke } from "@tauri-apps/api/core";
-import type { Node, ScanResult, TimeMachineStatus } from "./types";
+import type { DupReport, Node, ScanResult, TimeMachineStatus } from "./types";
 
 /** True when running inside the Tauri shell (vs. a plain browser dev preview). */
 export function isTauri(): boolean {
@@ -15,6 +15,11 @@ export function scanPath(path: string): Promise<ScanResult> {
 /** The real, unpruned direct children of a folder from the last scan (one level). */
 export function listChildren(path: string): Promise<Node[]> {
   return invoke("list_children", { path });
+}
+
+/** Find byte-identical duplicate files in the last scan (hashes contents). */
+export function findDuplicates(): Promise<DupReport> {
+  return invoke("find_duplicates");
 }
 
 export function homeDir(): Promise<string | null> {

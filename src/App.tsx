@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Category, Node, ScanResult, TimeMachineStatus } from "./lib/types";
+import type { Category, DupReport, Node, ScanResult, TimeMachineStatus } from "./lib/types";
 import { squarify, type Tile } from "./lib/treemap";
 import { fmtBytes, fmtRelTime, isStale } from "./lib/format";
 import { reclaimable, largestDirNamed, largestDirOfCategory, type Suggestion } from "./lib/suggestions";
 import { typeStats, buildColorMap, colorForNode, type LegendEntry } from "./lib/filetypes";
 import { sortItems, resolveFilter, collectByName, withoutAggregates, parentName, shortenPath, type SortKey, type SortDir } from "./lib/listview";
 import { removePaths } from "./lib/tree";
-import { makeDemoTree } from "./lib/demo";
+import { baseName, keeperOf, pruneDupReport } from "./lib/dups";
+import { makeDemoTree, demoDuplicates } from "./lib/demo";
 import * as api from "./lib/api";
 
 const CAT_COLOR: Record<Category, string> = {
@@ -26,7 +27,8 @@ const ICON_OPEN = (
 
 interface ScanEvent { files: number; bytes: number; total: number }
 interface ScanProgress { files: number; bytes: number; pct: number }
-type ViewMode = "treemap" | "list";
+interface DupEvent { hashed: number; total: number; bytes: number }
+type ViewMode = "treemap" | "list" | "dups";
 interface ListSource { key: string; label: string; nameFromParent: boolean }
 interface ConfirmData { title: string; detail: string; confirmLabel: string; onOk: () => void }
 
@@ -74,32 +76,71 @@ export default function App() {
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "size", dir: "desc" });
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState<ConfirmData | null>(null);
+  const [dups, setDups] = useState<DupReport | null>(null);
+  const [dupScanning, setDupScanning] = useState(false);
+  const [dupProgress, setDupProgress] = useState<{ hashed: number; total: number } | null>(null);
   const ranOnce = useRef(false);
+  const dupRunRef = useRef(0); // ignore results from a superseded duplicate scan
 
-  const runScan = useCallback(async (path: string) => {
-    setLoading(true);
-    setError(null);
-    setProgress(null);
-    try {
-      const result = await api.scanPath(path);
-      setScan(result);
-      setStack([result.tree]);
-      setSelected(null);
-      setListSource(null);
-      setChecked(new Set());
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-      setProgress(null);
-    }
+  // Kick off duplicate detection in the background, after the tree is on screen.
+  const runDups = useCallback((demoTree?: Node) => {
+    const id = ++dupRunRef.current;
+    setDups(null);
+    setDupScanning(true);
+    setDupProgress(null);
+    const work = api.isTauri() ? api.findDuplicates() : Promise.resolve(demoDuplicates(demoTree!));
+    work
+      .then((report) => {
+        if (id !== dupRunRef.current) return; // a newer scan started
+        setDups(report);
+        setDupScanning(false);
+      })
+      .catch((e) => {
+        if (id !== dupRunRef.current) return;
+        setDupScanning(false);
+        setError(String(e));
+      });
   }, []);
+
+  const runScan = useCallback(
+    async (path: string) => {
+      setLoading(true);
+      setError(null);
+      setProgress(null);
+      dupRunRef.current++; // invalidate any in-flight duplicate scan
+      setDups(null);
+      setDupScanning(false);
+      try {
+        const result = await api.scanPath(path);
+        setScan(result);
+        setStack([result.tree]);
+        setSelected(null);
+        setListSource(null);
+        setChecked(new Set());
+        runDups(); // background; never blocks the tree we just rendered
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setLoading(false);
+        setProgress(null);
+      }
+    },
+    [runDups],
+  );
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     listen<ScanEvent>("scan-progress", (e) => {
       const { files, bytes, total } = e.payload;
       setProgress({ files, bytes, pct: total > 0 ? Math.min(0.99, bytes / total) : 0 });
+    }).then((u) => (unlisten = u));
+    return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    listen<DupEvent>("dup-progress", (e) => {
+      setDupProgress({ hashed: e.payload.hashed, total: e.payload.total });
     }).then((u) => (unlisten = u));
     return () => unlisten?.();
   }, []);
@@ -113,10 +154,12 @@ export default function App() {
       setStack([demo]);
       setHome("/demo");
       setTm({ local_snapshots: 3, latest_backup: "/Volumes/Backups" });
+      runDups(demo);
       // Demo-only: the screenshot generator opens a view via URL hash
-      // (#list, #filter=node_modules). Ignored by the real (Tauri) app.
+      // (#list, #filter=node_modules, #dups). Ignored by the real (Tauri) app.
       const f = /filter=([\w-]+)/.exec(window.location.hash);
       if (f) { setListSource(resolveFilter(f[1])); setView("list"); }
+      else if (window.location.hash.includes("dups")) setView("dups");
       else if (window.location.hash.includes("list")) setView("list");
       return;
     }
@@ -127,7 +170,7 @@ export default function App() {
       if (h) await runScan(h);
       else setError("Could not locate your home directory.");
     })();
-  }, [runScan]);
+  }, [runScan, runDups]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -251,6 +294,7 @@ export default function App() {
       setStack((s) => remapStack(next, s, paths));
       setListItems((items) => items.filter((n) => !paths.includes(n.path)));
       setSelected((sel) => (sel && paths.includes(sel.path) ? null : sel));
+      setDups((d) => (d ? pruneDupReport(d, paths) : d));
     },
     [scan],
   );
@@ -289,7 +333,7 @@ export default function App() {
     <div className="app">
       <Toolbar root={stack[0] ?? null} loading={loading} view={view} onSetView={setViewMode} onRescan={() => stack[0] && runScan(stack[0].path)} />
       <div className="body">
-        <Sidebar root={root} tm={tm} colorMap={colorMap} onRecommend={onRecommend} />
+        <Sidebar root={root} tm={tm} colorMap={colorMap} onRecommend={onRecommend} dups={dups} dupScanning={dupScanning} dupProgress={dupProgress} onOpenDups={() => setView("dups")} />
         <main className="content">
           {error ? (
             <>
@@ -323,6 +367,15 @@ export default function App() {
                 onTrashOne={(n) => trashPaths([n.path], `${n.name} (${fmtBytes(n.size)})`)}
               />
             </>
+          ) : view === "dups" ? (
+            <DupsView
+              report={dups}
+              scanning={dupScanning}
+              progress={dupProgress}
+              home={home}
+              onReveal={(p) => api.revealInFinder(p)}
+              onTrashPaths={trashPaths}
+            />
           ) : (
             <>
               <Breadcrumb stack={stack} onJump={(i) => setStack(stack.slice(0, i + 1))} />
@@ -332,7 +385,9 @@ export default function App() {
           )}
         </main>
       </div>
-      {view === "list" ? (
+      {view === "dups" ? (
+        <DupsInspector report={dups} scanning={dupScanning} />
+      ) : view === "list" ? (
         <ListInspector
           count={checkedNodes.length}
           bytes={checkedBytes}
@@ -371,6 +426,7 @@ function Toolbar({ root, loading, view, onSetView, onRescan }: { root: Node | nu
         <div className="seg">
           <button className={view === "treemap" ? "on" : ""} onClick={() => onSetView("treemap")}>Treemap</button>
           <button className={view === "list" ? "on" : ""} onClick={() => onSetView("list")}>List</button>
+          <button className={view === "dups" ? "on" : ""} onClick={() => onSetView("dups")}>Duplicates</button>
         </div>
         <button className="btn primary" onClick={onRescan} disabled={loading}>{loading ? "Scanning…" : "Rescan"}</button>
       </div>
@@ -395,7 +451,16 @@ function Scanning({ progress }: { progress: ScanProgress | null }) {
   );
 }
 
-function Sidebar({ root, tm, colorMap, onRecommend }: { root: Node | null; tm: TimeMachineStatus | null; colorMap: Map<string, string>; onRecommend: (s: Suggestion) => void }) {
+function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgress, onOpenDups }: {
+  root: Node | null;
+  tm: TimeMachineStatus | null;
+  colorMap: Map<string, string>;
+  onRecommend: (s: Suggestion) => void;
+  dups: DupReport | null;
+  dupScanning: boolean;
+  dupProgress: { hashed: number; total: number } | null;
+  onOpenDups: () => void;
+}) {
   const suggestions = useMemo(() => (root ? reclaimable(root) : []), [root]);
   const segments = useMemo(() => {
     if (!root) return [] as { ext: string; bytes: number; color: string }[];
@@ -430,6 +495,38 @@ function Sidebar({ root, tm, colorMap, onRecommend }: { root: Node | null; tm: T
             <div className="t2">{tm ? `${tm.local_snapshots} local snapshot${tm.local_snapshots === 1 ? "" : "s"}` : "…"}</div>
           </div>
         </div>
+      </div>
+
+      <div className="side-sec">
+        <h3 className="side-h">Duplicates</h3>
+        {dupScanning ? (
+          <div className="status">
+            <div className="txt">
+              <div className="t1">Scanning…</div>
+              <div className="t2">
+                {dupProgress && dupProgress.total > 0
+                  ? `${Math.round((dupProgress.hashed / dupProgress.total) * 100)}% · ${dupProgress.hashed.toLocaleString()}/${dupProgress.total.toLocaleString()} files`
+                  : "hashing files in the background"}
+              </div>
+            </div>
+          </div>
+        ) : dups && dups.groups.length > 0 ? (
+          <div className="rec" onClick={onOpenDups} title="Review duplicate files">
+            <div className="rbody">
+              <div className="r1">{dups.groups.length} duplicate set{dups.groups.length === 1 ? "" : "s"}</div>
+              <div className="r2">
+                <span className="r2t">Identical files</span>
+                <span className="amt">{fmtBytes(dups.reclaimable)}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="status">
+            <div className="txt">
+              <div className="t2">{dups ? "None found" : "…"}</div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="side-sec" style={{ paddingBottom: 0 }}>
@@ -693,6 +790,93 @@ function ListInspector({ count, bytes, onReveal, onTrash }: { count: number; byt
       <div className="insp-actions">
         <button className="btn" disabled={count === 0} onClick={onReveal}>Reveal in Finder</button>
         <button className="btn danger" disabled={count === 0} onClick={onTrash}>Move {count} to Trash · {fmtBytes(bytes)}</button>
+      </div>
+    </div>
+  );
+}
+
+function DupsView({ report, scanning, progress, home, onReveal, onTrashPaths }: {
+  report: DupReport | null;
+  scanning: boolean;
+  progress: { hashed: number; total: number } | null;
+  home: string | null;
+  onReveal: (path: string) => void;
+  onTrashPaths: (paths: string[], label: string) => void;
+}) {
+  const groups = report?.groups ?? [];
+
+  if (scanning) {
+    const has = progress && progress.total > 0;
+    const pct = has ? Math.round((progress!.hashed / progress!.total) * 100) : 0;
+    return (
+      <div className="state">
+        <div className="scanning">
+          <div className={"scanbar" + (has ? "" : " indet")}>
+            <div className="scanbar-fill" style={has ? { width: `${pct}%` } : undefined} />
+          </div>
+          <div className="scan-count">
+            {has ? `Hashing ${progress!.hashed.toLocaleString()} / ${progress!.total.toLocaleString()} candidates · ${pct}%` : "Looking for duplicate files…"}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (groups.length === 0) {
+    return <div className="state">No duplicate files found ({fmtBytes(1 << 20)} and larger).</div>;
+  }
+
+  return (
+    <div className="dupwrap">
+      <div className="crumbs">
+        <span className="crumb cur">Duplicates</span>
+        <span className="right">{groups.length} set{groups.length === 1 ? "" : "s"} · {fmtBytes(report!.reclaimable)} reclaimable</span>
+      </div>
+      <div className="dupbody">
+        {groups.map((g, gi) => {
+          const keep = keeperOf(g);
+          const extras = g.paths.filter((p) => p !== keep);
+          return (
+            <div className="dupgroup" key={gi}>
+              <div className="dg-head">
+                <span className="dg-name">{baseName(keep)}</span>
+                <span className="dg-meta">{fmtBytes(g.size)} each · {g.paths.length} copies · reclaim {fmtBytes(g.reclaimable)}</span>
+                <button className="btn danger sm" onClick={() => onTrashPaths(extras, `${extras.length} extra cop${extras.length === 1 ? "y" : "ies"} of ${baseName(keep)} (${fmtBytes(g.reclaimable)})`)}>
+                  Trash {extras.length} extra{extras.length === 1 ? "" : "s"}
+                </button>
+              </div>
+              {g.paths.map((p) => {
+                const isKeep = p === keep;
+                return (
+                  <div className={"dupfile" + (isKeep ? " keep" : "")} key={p}>
+                    <span className="df-path">{shortenPath(p, home)}</span>
+                    {isKeep ? (
+                      <span className="df-tag">Keep</span>
+                    ) : (
+                      <span className="df-act">
+                        <button className="iact" title="Reveal in Finder" onClick={() => onReveal(p)}>{ICON_REVEAL}</button>
+                        <button className="iact danger" title="Move to Trash" onClick={() => onTrashPaths([p], `${baseName(p)} (${fmtBytes(g.size)})`)}>{ICON_TRASH}</button>
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DupsInspector({ report, scanning }: { report: DupReport | null; scanning: boolean }) {
+  const sets = report?.groups.length ?? 0;
+  const title = scanning ? "Scanning for duplicates…" : sets === 0 ? "No duplicates found" : `${sets} duplicate set${sets === 1 ? "" : "s"}`;
+  const sub = sets > 0 ? `${fmtBytes(report!.reclaimable)} reclaimable · keeps one copy of each` : scanning ? "Reading and hashing files in the background" : "Nothing to reclaim here";
+  return (
+    <div className={"inspector" + (sets === 0 ? " empty" : "")}>
+      <div className="insp-meta">
+        <div className="insp-path">{title}</div>
+        <div className="insp-sub">{sub}</div>
       </div>
     </div>
   );

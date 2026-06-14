@@ -9,11 +9,12 @@
 mod actions;
 mod backup;
 mod category;
+mod dups;
 mod safety;
 mod scan;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, State};
@@ -56,6 +57,17 @@ fn volume_used_bytes(path: &Path) -> u64 {
 struct AppState {
     scan_root: Mutex<Option<PathBuf>>,
     tree: Mutex<Option<scan::Node>>,
+    /// Bumped whenever a new scan starts, so an in-flight duplicate scan over the
+    /// previous tree cancels itself instead of finishing wasted work.
+    generation: Arc<AtomicU64>,
+}
+
+/// Streamed to the frontend as `dup-progress` while duplicate detection runs.
+#[derive(Clone, serde::Serialize)]
+struct DupProgressEvent {
+    hashed: u64,
+    total: u64,
+    bytes: u64,
 }
 
 #[derive(serde::Serialize)]
@@ -79,6 +91,8 @@ async fn scan_path(
     if !p.is_dir() {
         return Err("Path is not a directory".into());
     }
+    // A new scan invalidates any duplicate scan still hashing the previous tree.
+    state.generation.fetch_add(1, Ordering::SeqCst);
     // Run the (potentially long) parallel scan on a blocking thread so the UI never
     // freezes. A separate poller emits progress ~10x/sec by reading the shared
     // atomics, decoupling event emission from the scan's hot path.
@@ -140,6 +154,57 @@ fn list_children(state: State<AppState>, path: String) -> Result<Vec<scan::Node>
     Ok(dir.children.iter().map(scan::shallow).collect())
 }
 
+/// Find byte-identical duplicate files in the last scan. Reads file contents to
+/// hash them (still never writes), so it runs on a blocking thread with a poller
+/// emitting `dup-progress`. Cancels itself if a new scan starts mid-hash. The
+/// frontend kicks this off *after* the tree renders, so it never delays the UI.
+#[tauri::command]
+async fn find_duplicates(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<dups::DupReport, String> {
+    let mine = state.generation.load(Ordering::SeqCst);
+    // Bucket candidate files under the lock, then release it before hashing.
+    let by_size = {
+        let guard = state.tree.lock().unwrap();
+        let tree = guard.as_ref().ok_or("Scan a folder first")?;
+        dups::collect(tree, dups::MIN_DUP_SIZE)
+    };
+
+    let generation = state.generation.clone();
+    let progress = Arc::new(dups::DupProgress::default());
+    let done = Arc::new(AtomicBool::new(false));
+
+    let poll_app = app.clone();
+    let poll_progress = progress.clone();
+    let poll_done = done.clone();
+    let poller = std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(150));
+        let _ = poll_app.emit(
+            "dup-progress",
+            DupProgressEvent {
+                hashed: poll_progress.hashed.load(Ordering::Relaxed),
+                total: poll_progress.total.load(Ordering::Relaxed),
+                bytes: poll_progress.bytes.load(Ordering::Relaxed),
+            },
+        );
+        if poll_done.load(Ordering::Relaxed) {
+            break;
+        }
+    });
+
+    let hash_progress = progress.clone();
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        dups::find(by_size, &generation, mine, &hash_progress)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    done.store(true, Ordering::Relaxed);
+    let _ = poller.join();
+    Ok(report)
+}
+
 #[tauri::command]
 fn move_to_trash(state: State<AppState>, path: String) -> Result<String, String> {
     let root = state
@@ -197,6 +262,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_path,
             list_children,
+            find_duplicates,
             move_to_trash,
             reveal_in_finder,
             open_terminal_here,

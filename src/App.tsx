@@ -82,12 +82,10 @@ export default function App() {
   const ranOnce = useRef(false);
   const dupRunRef = useRef(0); // ignore results from a superseded duplicate scan
 
-  // Kick off duplicate detection in the background, after the tree is on screen.
+  // Collect the duplicate report once hashing (which began with the scan) drains.
   const runDups = useCallback((demoTree?: Node) => {
     const id = ++dupRunRef.current;
-    setDups(null);
     setDupScanning(true);
-    setDupProgress(null);
     const work = api.isTauri() ? api.findDuplicates() : Promise.resolve(demoDuplicates(demoTree!));
     work
       .then((report) => {
@@ -109,7 +107,8 @@ export default function App() {
       setProgress(null);
       dupRunRef.current++; // invalidate any in-flight duplicate scan
       setDups(null);
-      setDupScanning(false);
+      setDupProgress(null);
+      setDupScanning(true); // hashing starts on the backend together with the scan
       try {
         const result = await api.scanPath(path);
         setScan(result);
@@ -117,9 +116,10 @@ export default function App() {
         setSelected(null);
         setListSource(null);
         setChecked(new Set());
-        runDups(); // background; never blocks the tree we just rendered
+        runDups(); // collect the report once the streamed hashing finishes
       } catch (e) {
         setError(String(e));
+        setDupScanning(false);
       } finally {
         setLoading(false);
         setProgress(null);
@@ -333,7 +333,7 @@ export default function App() {
     <div className="app">
       <Toolbar root={stack[0] ?? null} loading={loading} view={view} onSetView={setViewMode} onRescan={() => stack[0] && runScan(stack[0].path)} />
       <div className="body">
-        <Sidebar root={root} tm={tm} colorMap={colorMap} onRecommend={onRecommend} dups={dups} dupScanning={dupScanning} dupProgress={dupProgress} onOpenDups={() => setView("dups")} />
+        <Sidebar root={root} tm={tm} colorMap={colorMap} onRecommend={onRecommend} dups={dups} dupScanning={dupScanning} dupProgress={dupProgress} scanning={loading} onOpenDups={() => setView("dups")} />
         <main className="content">
           {error ? (
             <>
@@ -451,7 +451,7 @@ function Scanning({ progress }: { progress: ScanProgress | null }) {
   );
 }
 
-function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgress, onOpenDups }: {
+function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgress, scanning, onOpenDups }: {
   root: Node | null;
   tm: TimeMachineStatus | null;
   colorMap: Map<string, string>;
@@ -459,8 +459,13 @@ function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgre
   dups: DupReport | null;
   dupScanning: boolean;
   dupProgress: { hashed: number; total: number } | null;
+  scanning: boolean;
   onOpenDups: () => void;
 }) {
+  // The candidate total only settles once the disk walk ends, so show a
+  // determinate bar then; while the walk is still streaming files, animate.
+  const dupPct = dupProgress && dupProgress.total > 0 ? Math.round((dupProgress.hashed / dupProgress.total) * 100) : 0;
+  const dupDeterminate = !scanning && !!dupProgress && dupProgress.total > 0;
   const suggestions = useMemo(() => (root ? reclaimable(root) : []), [root]);
   const segments = useMemo(() => {
     if (!root) return [] as { ext: string; bytes: number; color: string }[];
@@ -500,14 +505,18 @@ function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgre
       <div className="side-sec">
         <h3 className="side-h">Duplicates</h3>
         {dupScanning ? (
-          <div className="status">
-            <div className="txt">
-              <div className="t1">Scanning…</div>
-              <div className="t2">
-                {dupProgress && dupProgress.total > 0
-                  ? `${Math.round((dupProgress.hashed / dupProgress.total) * 100)}% · ${dupProgress.hashed.toLocaleString()}/${dupProgress.total.toLocaleString()} files`
-                  : "hashing files in the background"}
-              </div>
+          <div className="dupscan">
+            <div className="dupscan-head">
+              <span className="t1">Scanning…</span>
+              {dupDeterminate && <span className="dupscan-pct">{dupPct}%</span>}
+            </div>
+            <div className={"scanbar" + (dupDeterminate ? "" : " indet")}>
+              <div className="scanbar-fill" style={dupDeterminate ? { width: `${dupPct}%` } : undefined} />
+            </div>
+            <div className="t2">
+              {dupProgress && dupProgress.hashed > 0
+                ? `${dupProgress.hashed.toLocaleString()} file${dupProgress.hashed === 1 ? "" : "s"} hashed${dupDeterminate ? ` of ${dupProgress.total.toLocaleString()}` : ""}`
+                : "looking for duplicate files…"}
             </div>
           </div>
         ) : dups && dups.groups.length > 0 ? (

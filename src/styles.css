@@ -46,6 +46,8 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
+/* The app fills the window exactly; stop WKWebView's elastic rubber-band overscroll. */
+html, body { overflow: hidden; overscroll-behavior: none; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
   color: var(--ink);
@@ -83,7 +85,7 @@ body {
 /* sidebar */
 .sidebar {
   width: 312px; flex: 0 0 312px; background: var(--sidebar);
-  border-right: 1px solid var(--line); display: flex; flex-direction: column; overflow: auto;
+  border-right: 1px solid var(--line); display: flex; flex-direction: column; overflow: auto; overscroll-behavior: none;
 }
 .side-sec { padding: 16px 16px 6px; }
 .side-sec + .side-sec { border-top: 1px solid var(--line); }

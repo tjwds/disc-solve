@@ -5,7 +5,7 @@ import { squarify, type Tile } from "./lib/treemap";
 import { fmtBytes, fmtRelTime, isStale } from "./lib/format";
 import { reclaimable, type Suggestion } from "./lib/suggestions";
 import { typeStats, buildColorMap, colorForNode, type LegendEntry } from "./lib/filetypes";
-import { sortItems, resolveFilter, parentName, shortenPath, type SortKey, type SortDir } from "./lib/listview";
+import { sortItems, resolveFilter, withoutAggregates, parentName, shortenPath, type SortKey, type SortDir } from "./lib/listview";
 import { removePaths } from "./lib/tree";
 import { makeDemoTree } from "./lib/demo";
 import * as api from "./lib/api";
@@ -167,7 +167,9 @@ export default function App() {
     setSort((s) => (s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: key === "name" ? "asc" : "desc" }));
   }, []);
 
-  const listItems = listSource ? listSource.items : root?.children ?? [];
+  // Aggregated "N smaller items" placeholders are a tree-view device; the list
+  // shows individual items only.
+  const listItems = withoutAggregates(listSource ? listSource.items : root?.children ?? []);
   const checkedNodes = listItems.filter((n) => n.path && checked.has(n.path));
   const checkedBytes = checkedNodes.reduce((s, n) => s + n.size, 0);
 
@@ -248,7 +250,7 @@ export default function App() {
           ) : view === "list" ? (
             <>
               {listSource ? (
-                <FilterBar source={listSource} bytes={listSource.items.reduce((s, n) => s + n.size, 0)} onClear={() => setListSource(null)} />
+                <FilterBar label={listSource.label} count={listItems.length} bytes={listItems.reduce((s, n) => s + n.size, 0)} onClear={() => setListSource(null)} />
               ) : (
                 <Breadcrumb stack={stack} onJump={(i) => setStack(stack.slice(0, i + 1))} />
               )}
@@ -415,16 +417,16 @@ function Breadcrumb({ stack, onJump }: { stack: Node[]; onJump: (i: number) => v
   );
 }
 
-function FilterBar({ source, bytes, onClear }: { source: ListSource; bytes: number; onClear: () => void }) {
+function FilterBar({ label, count, bytes, onClear }: { label: string; count: number; bytes: number; onClear: () => void }) {
   return (
     <div className="crumbs">
       <span className="crumb cur">Filtered</span>
       <span className="sep">›</span>
       <span className="filterchip">
-        {source.label}
+        {label}
         <button className="x" title="Clear filter" onClick={onClear}>✕</button>
       </span>
-      <span className="right">{source.items.length} folder{source.items.length === 1 ? "" : "s"} · {fmtBytes(bytes)}</span>
+      <span className="right">{count} folder{count === 1 ? "" : "s"} · {fmtBytes(bytes)}</span>
     </div>
   );
 }

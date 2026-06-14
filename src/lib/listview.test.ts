@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sortItems, collectByName, resolveFilter, parentName, shortenPath } from "./listview";
+import { sortItems, withoutAggregates, collectByName, resolveFilter, parentName, shortenPath } from "./listview";
 import type { Node } from "./types";
 
 let n = 0;
@@ -31,6 +31,13 @@ describe("sortItems", () => {
   it("sorts by name and mtime", () => {
     expect(sortItems(items, "name", "asc").map((i) => i.name)).toEqual(["a", "b", "c"]);
     expect(sortItems(items, "mtime", "desc").map((i) => i.mtime)).toEqual([99, 50, 10]);
+  });
+});
+
+describe("withoutAggregates", () => {
+  it("drops the synthetic empty-path aggregate rows, keeping real items", () => {
+    const items = [leaf("a", 100), { ...leaf("12 smaller items", 999), path: "" }, leaf("b", 50)];
+    expect(withoutAggregates(items).map((n) => n.name)).toEqual(["a", "b"]);
   });
 });
 

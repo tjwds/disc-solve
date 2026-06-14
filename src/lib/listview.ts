@@ -27,6 +27,12 @@ export function sortItems(items: Node[], key: SortKey, dir: SortDir): Node[] {
   return [...items].sort((a, b) => sign * value(a, b));
 }
 
+/** Drop synthetic "N smaller items" aggregates (which carry an empty path).
+ *  Aggregation is a tree-view device; the list view shows individual items. */
+export function withoutAggregates(items: Node[]): Node[] {
+  return items.filter((n) => n.path !== "");
+}
+
 /** All top-most directories named `name` across the tree (don't descend into a match). */
 export function collectByName(root: Node, name: string): Node[] {
   const out: Node[] = [];

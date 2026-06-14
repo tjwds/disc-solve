@@ -466,7 +466,7 @@ function ListView({
         <SortHead label="Name" col="name" sort={sort} onSort={onSort} cls="lh-name" />
         <SortHead label="Size" col="size" sort={sort} onSort={onSort} cls="lh-size" />
         <SortHead label="Items" col="items" sort={sort} onSort={onSort} cls="lh-items" />
-        <SortHead label="Last used" col="mtime" sort={sort} onSort={onSort} cls="lh-used" />
+        <SortHead label="Last modified" col="mtime" sort={sort} onSort={onSort} cls="lh-used" />
       </div>
       <div className="lbody">
         {sorted.length === 0 && <div className="state">Nothing here.</div>}

@@ -10,6 +10,7 @@ mod actions;
 mod backup;
 mod category;
 mod dups;
+mod power;
 mod safety;
 mod scan;
 
@@ -140,6 +141,11 @@ async fn scan_path(
 
     let scan_progress = progress.clone();
     let (full, files, dirs, errors) = tauri::async_runtime::spawn_blocking(move || {
+        // Hold an App Nap assertion for the whole walk so throughput stays high
+        // even if the user switches away from the window. Suppression is
+        // process-wide, so this also protects the duplicate-hashing workers
+        // running concurrently. Dropped when the walk returns.
+        let _awake = power::KeepAwake::begin("Scanning disk usage");
         let full = scan::scan_with_sink(&target, &scan_progress, Some(&sink as &dyn scan::FileSink));
         // `sink` drops here, closing the file stream so the pipeline can wind down.
         (
@@ -211,9 +217,14 @@ async fn find_duplicates(
         }
     });
 
-    let report = tauri::async_runtime::spawn_blocking(move || pipeline.finish())
-        .await
-        .map_err(|e| e.to_string())?;
+    let report = tauri::async_runtime::spawn_blocking(move || {
+        // Any hashing still draining here is just as throttled by App Nap as the
+        // walk was, so hold the assertion until the report is assembled.
+        let _awake = power::KeepAwake::begin("Checking for duplicate files");
+        pipeline.finish()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     done.store(true, Ordering::Relaxed);
     let _ = poller.join();

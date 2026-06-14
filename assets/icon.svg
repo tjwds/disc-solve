@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Source for the app icon (src-tauri/icons/*). To regenerate the icon set:
+    1. render this to a 1024x1024 PNG (e.g. headless Chrome, transparent background)
+    2. npx tauri icon path/to/icon-1024.png
+    3. remove the generated src-tauri/icons/{android,ios} dirs (desktop-only)
+  Note: the "d"/"s" use the macOS system font (SF Pro via -apple-system), so render on macOS.
+-->
+<svg width="1024" height="1024" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="100">
+      <stop offset="0" stop-color="#3a3e47"/><stop offset="1" stop-color="#202329"/>
+    </linearGradient>
+    <clipPath id="sq"><rect width="100" height="100" rx="23"/></clipPath>
+  </defs>
+  <g clip-path="url(#sq)">
+    <rect width="100" height="100" fill="url(#bg)"/>
+    <!-- capacity ring (type breakdown + faint free slice), behind the wordmark -->
+    <path d="M50 50 L50 10 A40 40 0 0 1 88.04 62.36 Z" fill="#5b8def"/>
+    <path d="M50 50 L88.04 62.36 A40 40 0 0 1 44.99 89.68 Z" fill="#3fb0a4"/>
+    <path d="M50 50 L44.99 89.68 A40 40 0 0 1 13.78 66.96 Z" fill="#76c269"/>
+    <path d="M50 50 L13.78 66.96 A40 40 0 0 1 11.96 37.64 Z" fill="#f0a35e"/>
+    <path d="M50 50 L11.96 37.64 A40 40 0 0 1 26.49 17.64 Z" fill="#e8716d"/>
+    <path d="M50 50 L26.49 17.64 A40 40 0 0 1 50 10 Z" fill="#ffffff" fill-opacity="0.10"/>
+    <circle cx="50" cy="50" r="26" fill="url(#bg)"/>
+    <!-- d·s wordmark, outlined in the background shade to read over the ring -->
+    <text x="24" y="70" font-family="-apple-system,'SF Pro Display',Helvetica,Arial" font-size="56" font-weight="700" fill="#fff" stroke="url(#bg)" stroke-width="6" stroke-linejoin="round" paint-order="stroke" text-anchor="middle">d</text>
+    <text x="75" y="70" font-family="-apple-system,'SF Pro Display',Helvetica,Arial" font-size="56" font-weight="700" fill="#fff" stroke="url(#bg)" stroke-width="6" stroke-linejoin="round" paint-order="stroke" text-anchor="middle">s</text>
+    <circle cx="50" cy="54" r="5" fill="#7fe0c4"/>
+  </g>
+</svg>

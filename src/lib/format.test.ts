@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fmtBytes, pctOf } from "./format";
+import { fmtBytes, pctOf, fmtRelTime, isStale } from "./format";
 
 describe("fmtBytes", () => {
   it("scales across units", () => {
@@ -24,5 +24,29 @@ describe("pctOf", () => {
 
   it("handles a zero whole", () => {
     expect(pctOf(1, 0)).toBe("0%");
+  });
+});
+
+const NOW = 1_700_000_000;
+const D = 86400;
+
+describe("fmtRelTime", () => {
+  it("formats ages across scales", () => {
+    expect(fmtRelTime(NOW - 30, NOW)).toBe("just now");
+    expect(fmtRelTime(NOW - D, NOW)).toBe("Yesterday");
+    expect(fmtRelTime(NOW - 3 * D, NOW)).toBe("3 days ago");
+    expect(fmtRelTime(NOW - 90 * D, NOW)).toBe("3 months ago");
+    expect(fmtRelTime(NOW - 400 * D, NOW)).toBe("1 year ago");
+  });
+  it("handles missing timestamps", () => {
+    expect(fmtRelTime(0, NOW)).toBe("—");
+  });
+});
+
+describe("isStale", () => {
+  it("flags timestamps older than the threshold", () => {
+    expect(isStale(NOW - 90 * D, 60, NOW)).toBe(true);
+    expect(isStale(NOW - 10 * D, 60, NOW)).toBe(false);
+    expect(isStale(0, 60, NOW)).toBe(false);
   });
 });

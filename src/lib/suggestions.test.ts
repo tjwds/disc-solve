@@ -4,7 +4,7 @@ import type { Category, Node } from "./types";
 
 let counter = 0;
 function leaf(name: string, size: number, category: Category): Node {
-  return { name, path: "/p" + counter++, size, is_dir: false, is_symlink: false, category, item_count: 1, children: [] };
+  return { name, path: "/p" + counter++, size, is_dir: false, is_symlink: false, category, item_count: 1, mtime: 0, children: [] };
 }
 function dir(name: string, category: Category, children: Node[]): Node {
   return {
@@ -15,6 +15,7 @@ function dir(name: string, category: Category, children: Node[]): Node {
     is_symlink: false,
     category,
     item_count: children.length,
+    mtime: 0,
     children,
   };
 }
@@ -60,15 +61,10 @@ describe("reclaimable", () => {
     for (let i = 1; i < s.length; i++) expect(s[i - 1].bytes).toBeGreaterThanOrEqual(s[i].bytes);
   });
 
-  it("attaches a drill target to folder suggestions and openTrash to the Trash", () => {
+  it("opens the list view for folder suggestions and the Trash for trash", () => {
     const s = reclaimable(sampleTree());
-    const nm = s.find((x) => x.key === "node_modules")!;
-    expect(nm.action).toBe("drill");
-    expect(nm.path).toBeTruthy();
-
-    const trash = s.find((x) => x.key === "trash")!;
-    expect(trash.action).toBe("openTrash");
-    expect(trash.path).toBeUndefined();
+    expect(s.find((x) => x.key === "node_modules")!.action).toBe("list");
+    expect(s.find((x) => x.key === "trash")!.action).toBe("openTrash");
   });
 
   it("omits empty categories", () => {

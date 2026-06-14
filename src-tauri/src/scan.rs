@@ -31,6 +31,8 @@ pub struct Node {
     pub category: Category,
     /// Number of files at or below this node (a file is 1).
     pub item_count: u64,
+    /// Most recent modification time (unix seconds) at or below this node.
+    pub mtime: i64,
     pub children: Vec<Node>,
 }
 
@@ -58,7 +60,7 @@ fn name_of(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-fn leaf(path: &Path, size: u64, is_symlink: bool, category: Category) -> Node {
+fn leaf(path: &Path, size: u64, is_symlink: bool, category: Category, mtime: i64) -> Node {
     Node {
         name: name_of(path),
         path: path.display().to_string(),
@@ -67,6 +69,7 @@ fn leaf(path: &Path, size: u64, is_symlink: bool, category: Category) -> Node {
         is_symlink,
         category,
         item_count: 1,
+        mtime,
         children: vec![],
     }
 }
@@ -94,6 +97,7 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
                 is_symlink: false,
                 category: Category::Other,
                 item_count: 0,
+                mtime: 0,
                 children: vec![],
             };
         }
@@ -104,7 +108,7 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
         let size = meta.blocks() * 512;
         ctx.progress.files.fetch_add(1, Ordering::Relaxed);
         ctx.progress.bytes.fetch_add(size, Ordering::Relaxed);
-        return leaf(path, size, true, Category::Other);
+        return leaf(path, size, true, Category::Other, meta.mtime());
     }
 
     if meta.is_dir() {
@@ -124,6 +128,13 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
         children.sort_by(|a, b| b.size.cmp(&a.size)); // largest first
         let total: u64 = children.iter().map(|c| c.size).sum();
         let count: u64 = children.iter().map(|c| c.item_count).sum();
+        // "Last activity" for a directory = the newest mtime at or below it.
+        let mtime = children
+            .iter()
+            .map(|c| c.mtime)
+            .max()
+            .unwrap_or(0)
+            .max(meta.mtime());
         ctx.progress.dirs_scanned.fetch_add(1, Ordering::Relaxed);
         Node {
             name: name_of(path),
@@ -133,6 +144,7 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
             is_symlink: false,
             category: categorize(path, true),
             item_count: count,
+            mtime,
             children,
         }
     } else {
@@ -148,7 +160,7 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
         }
         ctx.progress.files.fetch_add(1, Ordering::Relaxed);
         ctx.progress.bytes.fetch_add(size, Ordering::Relaxed);
-        leaf(path, size, false, categorize(path, false))
+        leaf(path, size, false, categorize(path, false), meta.mtime())
     }
 }
 
@@ -165,12 +177,14 @@ pub fn prune(node: &mut Node, min_size: u64, max_children: usize) {
     let mut kept: Vec<Node> = Vec::new();
     let mut dropped_size = 0u64;
     let mut dropped_count = 0u64;
+    let mut dropped_mtime = 0i64;
     for (i, child) in std::mem::take(&mut node.children).into_iter().enumerate() {
         if i < max_children && child.size >= min_size {
             kept.push(child);
         } else {
             dropped_size += child.size;
             dropped_count += child.item_count;
+            dropped_mtime = dropped_mtime.max(child.mtime);
         }
     }
     for child in kept.iter_mut() {
@@ -185,6 +199,7 @@ pub fn prune(node: &mut Node, min_size: u64, max_children: usize) {
             is_symlink: false,
             category: Category::Other,
             item_count: dropped_count,
+            mtime: dropped_mtime,
             children: vec![],
         });
         kept.sort_by(|a, b| b.size.cmp(&a.size));
@@ -310,7 +325,24 @@ mod tests {
             is_symlink: false,
             category: Category::Other,
             item_count: 1,
+            mtime: 0,
             children: vec![],
+        }
+    }
+
+    #[test]
+    fn dir_mtime_is_populated_from_descendants() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_file(&root.join("a.bin"), 1000);
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        write_file(&sub.join("b.bin"), 2000);
+
+        let tree = scan(root, &Progress::default());
+        assert!(tree.mtime > 0, "directory mtime should be populated");
+        for c in &tree.children {
+            assert!(tree.mtime >= c.mtime, "dir mtime must be >= each child's");
         }
     }
 
@@ -328,6 +360,7 @@ mod tests {
             is_symlink: false,
             category: Category::Other,
             item_count: 10,
+            mtime: 0,
             children: kids,
         };
 
@@ -370,6 +403,7 @@ mod tests {
             is_symlink: false,
             category: Category::Other,
             item_count: 2,
+            mtime: 0,
             children: vec![
                 synthetic_leaf("big", "/big", 1000),
                 synthetic_leaf("tiny", "/tiny", 5),

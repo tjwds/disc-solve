@@ -87,10 +87,8 @@ export interface Suggestion {
   title: string;
   subtitle: string;
   bytes: number;
-  /** What clicking does: drill into `path`, or open the Trash in Finder. */
-  action: "drill" | "openTrash";
-  /** For "drill": the directory to navigate the treemap into. */
-  path?: string;
+  /** "list" opens the filtered list view (resolved from `key`); "openTrash" opens the Trash. */
+  action: "list" | "openTrash";
 }
 
 /** Concrete reclaimable suggestions, largest first, omitting empty ones. */
@@ -99,49 +97,22 @@ export function reclaimable(root: Node): Suggestion[] {
 
   const nodeModules = sumDirsNamed(root, "node_modules");
   if (nodeModules > 0) {
-    out.push({
-      key: "node_modules",
-      title: "node_modules",
-      subtitle: "Regenerable build dependencies",
-      bytes: nodeModules,
-      action: "drill",
-      path: largestDirNamed(root, "node_modules")?.path,
-    });
+    out.push({ key: "node_modules", title: "node_modules", subtitle: "Regenerable build dependencies", bytes: nodeModules, action: "list" });
   }
 
   const derived = sumDirsNamed(root, "DerivedData");
   if (derived > 0) {
-    out.push({
-      key: "derived",
-      title: "Xcode DerivedData",
-      subtitle: "Rebuilds automatically",
-      bytes: derived,
-      action: "drill",
-      path: largestDirNamed(root, "DerivedData")?.path,
-    });
+    out.push({ key: "derived", title: "Xcode DerivedData", subtitle: "Rebuilds automatically", bytes: derived, action: "list" });
   }
 
   const caches = sumCategory(root, "cache");
   if (caches > 0) {
-    out.push({
-      key: "caches",
-      title: "Caches",
-      subtitle: "Safe to clear; apps rebuild them",
-      bytes: caches,
-      action: "drill",
-      path: largestDirOfCategory(root, "cache")?.path,
-    });
+    out.push({ key: "caches", title: "Caches", subtitle: "Safe to clear; apps rebuild them", bytes: caches, action: "list" });
   }
 
   const trash = sumCategory(root, "trash");
   if (trash > 0) {
-    out.push({
-      key: "trash",
-      title: "Empty Trash",
-      subtitle: "Opens the Trash in Finder",
-      bytes: trash,
-      action: "openTrash",
-    });
+    out.push({ key: "trash", title: "Empty Trash", subtitle: "Opens the Trash in Finder", bytes: trash, action: "openTrash" });
   }
 
   return out.sort((a, b) => b.bytes - a.bytes);

@@ -3,11 +3,11 @@ import { squarify } from "./treemap";
 import type { Node } from "./types";
 
 function leaf(name: string, size: number): Node {
-  return { name, path: "/" + name, size, is_dir: false, is_symlink: false, category: "other", item_count: 1, children: [] };
+  return { name, path: "/" + name, size, is_dir: false, is_symlink: false, category: "other", item_count: 1, mtime: 0, children: [] };
 }
 function dir(name: string, children: Node[]): Node {
   const size = children.reduce((s, c) => s + c.size, 0);
-  return { name, path: "/" + name, size, is_dir: true, is_symlink: false, category: "other", item_count: children.length, children };
+  return { name, path: "/" + name, size, is_dir: true, is_symlink: false, category: "other", item_count: children.length, mtime: 0, children };
 }
 
 describe("squarify", () => {

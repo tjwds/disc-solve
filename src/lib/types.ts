@@ -22,6 +22,8 @@ export interface Node {
   is_symlink: boolean;
   category: Category;
   item_count: number;
+  /** Most recent modification time (unix seconds) at or below this node. */
+  mtime: number;
   children: Node[];
 }
 

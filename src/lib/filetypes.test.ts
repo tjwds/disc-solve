@@ -4,10 +4,10 @@ import type { Node } from "./types";
 
 let n = 0;
 function leaf(name: string, size: number, path = "/p" + n++): Node {
-  return { name, path, size, is_dir: false, is_symlink: false, category: "other", item_count: 1, children: [] };
+  return { name, path, size, is_dir: false, is_symlink: false, category: "other", item_count: 1, mtime: 0, children: [] };
 }
 function dir(name: string, children: Node[]): Node {
-  return { name, path: "/d" + n++, size: children.reduce((s, c) => s + c.size, 0), is_dir: true, is_symlink: false, category: "other", item_count: children.length, children };
+  return { name, path: "/d" + n++, size: children.reduce((s, c) => s + c.size, 0), is_dir: true, is_symlink: false, category: "other", item_count: children.length, mtime: 0, children };
 }
 
 describe("extOf", () => {

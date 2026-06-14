@@ -33,6 +33,11 @@ export function quickLook(path: string): Promise<void> {
   return invoke("quick_look", { path });
 }
 
+/** Opens the Trash in Finder so the user can empty it themselves. */
+export function openTrash(): Promise<void> {
+  return invoke("open_trash");
+}
+
 export function timeMachineStatus(): Promise<TimeMachineStatus> {
   return invoke("time_machine_status");
 }

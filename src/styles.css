@@ -100,7 +100,7 @@ body {
 .status .t1 { font-size: 12.5px; font-weight: 600; }
 .status .t2 { font-size: 11.5px; color: var(--ink-2); margin-top: 1px; }
 .recs { padding: 6px 10px 14px; }
-.rec { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; }
+.rec { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; cursor: pointer; }
 .rec:hover { background: var(--control); }
 .rbody { flex: 1; min-width: 0; }
 .r1 { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -53,6 +53,13 @@ pub fn open_terminal_here(path: &Path) -> Result<(), String> {
     run("open", &terminal_args(path))
 }
 
+/// Open a path in Finder (`open <path>`). For a directory this opens a Finder
+/// window. Non-destructive — used to show the Trash so the user can empty it
+/// themselves; the app never empties or hard-deletes anything.
+pub fn open_path(path: &Path) -> Result<(), String> {
+    run("open", &[path.display().to_string()])
+}
+
 /// Quick Look preview a file (`qlmanage -p <path>`). Non-destructive.
 pub fn quick_look(path: &Path) -> Result<(), String> {
     // -p = preview; qlmanage prints noise to stderr, which we discard.

@@ -150,6 +150,14 @@ fn quick_look(path: String) -> Result<(), String> {
     actions::quick_look(&PathBuf::from(path))
 }
 
+/// Opens the user's Trash in Finder so they can review and empty it themselves.
+/// The app never empties the Trash or hard-deletes anything.
+#[tauri::command]
+fn open_trash() -> Result<(), String> {
+    let home = std::env::var_os("HOME").ok_or("Could not locate the home directory")?;
+    actions::open_path(&PathBuf::from(home).join(".Trash"))
+}
+
 #[tauri::command]
 fn time_machine_status() -> backup::TimeMachineStatus {
     backup::time_machine_status()
@@ -171,6 +179,7 @@ pub fn run() {
             reveal_in_finder,
             open_terminal_here,
             quick_look,
+            open_trash,
             time_machine_status,
             home_dir,
         ])

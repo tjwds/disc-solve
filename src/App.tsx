@@ -3,7 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Node, ScanResult, TimeMachineStatus } from "./lib/types";
 import { squarify, type Tile } from "./lib/treemap";
 import { fmtBytes } from "./lib/format";
-import { reclaimable } from "./lib/suggestions";
+import { reclaimable, type Suggestion } from "./lib/suggestions";
 import { typeStats, buildColorMap, colorForNode, type LegendEntry } from "./lib/filetypes";
 import { makeDemoTree } from "./lib/demo";
 import * as api from "./lib/api";
@@ -137,11 +137,28 @@ export default function App() {
     }
   }, [selected, stack, runScan]);
 
+  // Clicking a recommendation gives a "view into it": drill the treemap into the
+  // relevant folder, or open the Trash in Finder. Never deletes anything.
+  const onRecommend = useCallback(
+    (s: Suggestion) => {
+      if (s.action === "openTrash") {
+        api.openTrash().catch((e) => setError(String(e)));
+        return;
+      }
+      if (s.action === "drill" && s.path && tree) {
+        const chain = findChain(tree, s.path);
+        setStack(chain);
+        setSelected(chain[chain.length - 1] ?? null);
+      }
+    },
+    [tree],
+  );
+
   return (
     <div className="app">
       <Toolbar root={stack[0] ?? null} loading={loading} onRescan={() => stack[0] && runScan(stack[0].path)} />
       <div className="body">
-        <Sidebar root={root} tm={tm} colorMap={colorMap} />
+        <Sidebar root={root} tm={tm} colorMap={colorMap} onRecommend={onRecommend} />
         <main className="content">
           <Breadcrumb stack={stack} onJump={(i) => setStack(stack.slice(0, i + 1))} />
           {error ? (
@@ -192,7 +209,17 @@ function Scanning({ progress }: { progress: ScanProgress | null }) {
   );
 }
 
-function Sidebar({ root, tm, colorMap }: { root: Node | null; tm: TimeMachineStatus | null; colorMap: Map<string, string> }) {
+function Sidebar({
+  root,
+  tm,
+  colorMap,
+  onRecommend,
+}: {
+  root: Node | null;
+  tm: TimeMachineStatus | null;
+  colorMap: Map<string, string>;
+  onRecommend: (s: Suggestion) => void;
+}) {
   const suggestions = useMemo(() => (root ? reclaimable(root) : []), [root]);
   const segments = useMemo(() => {
     if (!root) return [];
@@ -234,7 +261,7 @@ function Sidebar({ root, tm, colorMap }: { root: Node | null; tm: TimeMachineSta
       </div>
       <div className="recs">
         {suggestions.map((s) => (
-          <div className="rec" key={s.key}>
+          <div className="rec" key={s.key} onClick={() => onRecommend(s)} title={s.action === "openTrash" ? "Open the Trash in Finder" : "Show in the treemap"}>
             <div className="rbody">
               <div className="r1">{s.title}</div>
               <div className="r2">

@@ -60,6 +60,17 @@ describe("reclaimable", () => {
     for (let i = 1; i < s.length; i++) expect(s[i - 1].bytes).toBeGreaterThanOrEqual(s[i].bytes);
   });
 
+  it("attaches a drill target to folder suggestions and openTrash to the Trash", () => {
+    const s = reclaimable(sampleTree());
+    const nm = s.find((x) => x.key === "node_modules")!;
+    expect(nm.action).toBe("drill");
+    expect(nm.path).toBeTruthy();
+
+    const trash = s.find((x) => x.key === "trash")!;
+    expect(trash.action).toBe("openTrash");
+    expect(trash.path).toBeUndefined();
+  });
+
   it("omits empty categories", () => {
     const empty = dir("home", "other", [leaf("doc.pdf", 100, "docs")]);
     expect(reclaimable(empty)).toEqual([]);

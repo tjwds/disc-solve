@@ -1,6 +1,7 @@
-// Derives the sidebar's "state of your system" numbers from a real scan tree:
-// per-category totals (for the gauge/legend) and concrete reclaimable suggestions.
-// Pure and unit-tested.
+// Derives the sidebar's reclaimable suggestions from a scan tree. Each suggestion
+// carries an action so the UI can give a "view into it": drill the treemap into
+// the relevant folder, or — for the Trash — open it in Finder. Nothing here ever
+// deletes: the app never hard-deletes, and even trashing is the user's action.
 
 import type { Category, Node } from "./types";
 
@@ -34,14 +35,13 @@ export function categoryTotals(root: Node): CategoryTotals {
   return totals;
 }
 
-/** Total on-disk size of every directory named exactly `name` (not nested within
- *  another match — we stop descending once we find one). */
+/** Total on-disk size of every directory named exactly `name` (top-most match only). */
 export function sumDirsNamed(root: Node, name: string): number {
   let total = 0;
   const visit = (n: Node) => {
     if (n.is_dir && n.name === name) {
       total += n.size;
-      return; // don't double-count nested matches
+      return;
     }
     n.children.forEach(visit);
   };
@@ -54,11 +54,43 @@ export function sumCategory(root: Node, category: Category): number {
   return categoryTotals(root)[category];
 }
 
+/** The largest (top-most) directory named `name`, for navigating into. */
+export function largestDirNamed(root: Node, name: string): Node | null {
+  let best: Node | null = null;
+  const visit = (n: Node) => {
+    if (n.is_dir && n.name === name) {
+      if (!best || n.size > best.size) best = n;
+      return; // don't descend into a match
+    }
+    n.children.forEach(visit);
+  };
+  visit(root);
+  return best;
+}
+
+/** The largest (top-most) directory of a given category, for navigating into. */
+export function largestDirOfCategory(root: Node, category: Category): Node | null {
+  let best: Node | null = null;
+  const visit = (n: Node) => {
+    if (n.is_dir && n.category === category) {
+      if (!best || n.size > best.size) best = n;
+      return;
+    }
+    n.children.forEach(visit);
+  };
+  visit(root);
+  return best;
+}
+
 export interface Suggestion {
   key: string;
   title: string;
   subtitle: string;
   bytes: number;
+  /** What clicking does: drill into `path`, or open the Trash in Finder. */
+  action: "drill" | "openTrash";
+  /** For "drill": the directory to navigate the treemap into. */
+  path?: string;
 }
 
 /** Concrete reclaimable suggestions, largest first, omitting empty ones. */
@@ -67,19 +99,49 @@ export function reclaimable(root: Node): Suggestion[] {
 
   const nodeModules = sumDirsNamed(root, "node_modules");
   if (nodeModules > 0) {
-    out.push({ key: "node_modules", title: "node_modules", subtitle: "Regenerable build dependencies", bytes: nodeModules });
+    out.push({
+      key: "node_modules",
+      title: "node_modules",
+      subtitle: "Regenerable build dependencies",
+      bytes: nodeModules,
+      action: "drill",
+      path: largestDirNamed(root, "node_modules")?.path,
+    });
   }
+
   const derived = sumDirsNamed(root, "DerivedData");
   if (derived > 0) {
-    out.push({ key: "derived", title: "Xcode DerivedData", subtitle: "Rebuilds automatically", bytes: derived });
+    out.push({
+      key: "derived",
+      title: "Xcode DerivedData",
+      subtitle: "Rebuilds automatically",
+      bytes: derived,
+      action: "drill",
+      path: largestDirNamed(root, "DerivedData")?.path,
+    });
   }
+
   const caches = sumCategory(root, "cache");
   if (caches > 0) {
-    out.push({ key: "caches", title: "Caches", subtitle: "Safe to clear; apps rebuild them", bytes: caches });
+    out.push({
+      key: "caches",
+      title: "Caches",
+      subtitle: "Safe to clear; apps rebuild them",
+      bytes: caches,
+      action: "drill",
+      path: largestDirOfCategory(root, "cache")?.path,
+    });
   }
+
   const trash = sumCategory(root, "trash");
   if (trash > 0) {
-    out.push({ key: "trash", title: "Empty Trash", subtitle: "Items already in the Trash", bytes: trash });
+    out.push({
+      key: "trash",
+      title: "Empty Trash",
+      subtitle: "Opens the Trash in Finder",
+      bytes: trash,
+      action: "openTrash",
+    });
   }
 
   return out.sort((a, b) => b.bytes - a.bytes);

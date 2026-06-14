@@ -515,7 +515,7 @@ function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgre
             </div>
             <div className="t2">
               {dupProgress && dupProgress.hashed > 0
-                ? `${dupProgress.hashed.toLocaleString()} file${dupProgress.hashed === 1 ? "" : "s"} hashed${dupDeterminate ? ` of ${dupProgress.total.toLocaleString()}` : ""}`
+                ? `${dupProgress.hashed.toLocaleString()} file${dupProgress.hashed === 1 ? "" : "s"} checked${dupDeterminate ? ` of ${dupProgress.total.toLocaleString()}` : ""}`
                 : "looking for duplicate files…"}
             </div>
           </div>
@@ -824,7 +824,7 @@ function DupsView({ report, scanning, progress, home, onReveal, onTrashPaths }: 
             <div className="scanbar-fill" style={has ? { width: `${pct}%` } : undefined} />
           </div>
           <div className="scan-count">
-            {has ? `Hashing ${progress!.hashed.toLocaleString()} / ${progress!.total.toLocaleString()} candidates · ${pct}%` : "Looking for duplicate files…"}
+            {has ? `Checking ${progress!.hashed.toLocaleString()} / ${progress!.total.toLocaleString()} candidates · ${pct}%` : "Looking for duplicate files…"}
           </div>
         </div>
       </div>
@@ -880,7 +880,7 @@ function DupsView({ report, scanning, progress, home, onReveal, onTrashPaths }: 
 function DupsInspector({ report, scanning }: { report: DupReport | null; scanning: boolean }) {
   const sets = report?.groups.length ?? 0;
   const title = scanning ? "Scanning for duplicates…" : sets === 0 ? "No duplicates found" : `${sets} duplicate set${sets === 1 ? "" : "s"}`;
-  const sub = sets > 0 ? `${fmtBytes(report!.reclaimable)} reclaimable · keeps one copy of each` : scanning ? "Reading and hashing files in the background" : "Nothing to reclaim here";
+  const sub = sets > 0 ? `${fmtBytes(report!.reclaimable)} reclaimable · keeps one copy of each` : scanning ? "Reading and checking files in the background" : "Nothing to reclaim here";
   return (
     <div className={"inspector" + (sets === 0 ? " empty" : "")}>
       <div className="insp-meta">

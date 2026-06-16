@@ -14,6 +14,7 @@
 //! free: the scanner zeroes the size of every link after the first, so only one
 //! path per inode ever clears `MIN_DUP_SIZE` and reaches the pipeline.
 
+use crate::category;
 use crate::scan::FileSink;
 use crossbeam_channel::{unbounded, Sender};
 use serde::Serialize;
@@ -21,6 +22,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -112,7 +114,10 @@ pub struct PipeSink {
 
 impl FileSink for PipeSink {
     fn file(&self, path: &str, size: u64) {
-        if size >= self.min_size {
+        // Skip files already in the Trash: they're on their way out, so listing
+        // them as reclaimable duplicates (or counting one against a live copy)
+        // would be redundant. The size pre-filter runs first as it's cheaper.
+        if size >= self.min_size && !category::in_trash(Path::new(path)) {
             let _ = self.tx.send((path.to_string(), size));
         }
     }
@@ -296,6 +301,29 @@ mod tests {
         assert_eq!(report.groups.len(), 1);
         assert_eq!(report.groups[0].paths.len(), 3);
         assert_eq!(report.groups[0].reclaimable, 10000); // size * (3 - 1)
+    }
+
+    #[test]
+    fn trash_copies_are_excluded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let trash = root.join(".Trash");
+        std::fs::create_dir(&trash).unwrap();
+        let data = vec![b'd'; 4000];
+        write(&root.join("a.bin"), &data);
+        write(&root.join("b.bin"), &data);
+        write(&trash.join("c.bin"), &data); // identical, but already in the Trash
+
+        let a = root.join("a.bin").display().to_string();
+        let b = root.join("b.bin").display().to_string();
+        let c = trash.join("c.bin").display().to_string();
+        let report = run(&[(a.clone(), 4000), (b.clone(), 4000), (c, 4000)], 1, 1);
+
+        // Only the two live copies group; the Trash copy never enters the pipeline.
+        assert_eq!(report.groups.len(), 1);
+        assert_eq!(report.groups[0].paths, vec![a, b]);
+        assert_eq!(report.groups[0].reclaimable, 4000); // one live extra, not two
+        assert_eq!(report.hashed, 2, "the Trash file is filtered before hashing");
     }
 
     #[test]

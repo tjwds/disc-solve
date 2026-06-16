@@ -36,9 +36,17 @@ fn has_component(path: &Path, needle: &str) -> bool {
         .any(|c| c.as_os_str().to_str() == Some(needle))
 }
 
+/// Whether `path` lies in the Trash (a `.Trash` component anywhere, e.g.
+/// `~/.Trash`). The single definition of "in the Trash" — drives the `Trash`
+/// category and excludes such files from duplicate detection (they are already
+/// on their way out, so offering them as reclaimable copies would be redundant).
+pub fn in_trash(path: &Path) -> bool {
+    has_component(path, ".Trash")
+}
+
 pub fn categorize(path: &Path, is_dir: bool) -> Category {
     // Order matters: the most specific / structural rules win first.
-    if has_component(path, ".Trash") {
+    if in_trash(path) {
         return Category::Trash;
     }
 

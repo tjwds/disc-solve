@@ -173,6 +173,18 @@ body {
 @keyframes scanslide { 0% { transform: translateX(-120%); } 100% { transform: translateX(280%); } }
 .scan-count { font-size: 13px; font-weight: 600; color: var(--ink); }
 
+/* scan-in-progress: the treemap builds behind a frosted, semi-transparent overlay */
+.scanstage { position: relative; flex: 1; display: flex; min-height: 0; }
+.treemap.preview { pointer-events: none; }
+.scan-overlay {
+  position: absolute; inset: 10px; z-index: 8; border-radius: 5px;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  -webkit-backdrop-filter: blur(7px) saturate(0.92);
+  backdrop-filter: blur(7px) saturate(0.92);
+}
+.scan-overlay .scanning { padding: 18px 22px; }
+
 /* segmented view toggle */
 .seg { display: flex; background: var(--track); border-radius: 7px; padding: 2px; }
 .seg button { border: 0; background: transparent; font-size: 12px; color: var(--ink-2); padding: 4px 11px; border-radius: 5px; cursor: pointer; font-family: inherit; }

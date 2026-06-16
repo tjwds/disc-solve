@@ -105,6 +105,10 @@ async fn scan_path(
     let done = Arc::new(AtomicBool::new(false));
     let total = volume_used_bytes(&p);
 
+    // The partial tree, built as the walk proceeds, so the treemap can fill in
+    // behind the scanning overlay. Shared with the poller, which snapshots it.
+    let live = scan::live_root(&p);
+
     // Duplicate detection starts now and hashes files as the walk streams them in,
     // so it overlaps the scan instead of waiting for it. `find_duplicates` finalizes.
     let dup_progress = Arc::new(dups::DupProgress::default());
@@ -114,39 +118,53 @@ async fn scan_path(
     let poll_app = app.clone();
     let poll_progress = progress.clone();
     let poll_dup = dup_progress.clone();
+    let poll_live = live.clone();
     let poll_done = done.clone();
-    let poller = std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_millis(100));
-        let _ = poll_app.emit(
-            "scan-progress",
-            ScanProgress {
-                files: poll_progress.files.load(Ordering::Relaxed),
-                bytes: poll_progress.bytes.load(Ordering::Relaxed),
-                total,
-            },
-        );
-        // Hashing overlaps the walk, so report its progress from the start too.
-        let _ = poll_app.emit(
-            "dup-progress",
-            DupProgressEvent {
-                hashed: poll_dup.hashed.load(Ordering::Relaxed),
-                total: poll_dup.total.load(Ordering::Relaxed),
-                bytes: poll_dup.bytes.load(Ordering::Relaxed),
-            },
-        );
-        if poll_done.load(Ordering::Relaxed) {
-            break;
+    let poller = std::thread::spawn(move || {
+        let mut tick: u32 = 0;
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+            tick += 1;
+            let _ = poll_app.emit(
+                "scan-progress",
+                ScanProgress {
+                    files: poll_progress.files.load(Ordering::Relaxed),
+                    bytes: poll_progress.bytes.load(Ordering::Relaxed),
+                    total,
+                },
+            );
+            // Hashing overlaps the walk, so report its progress from the start too.
+            let _ = poll_app.emit(
+                "dup-progress",
+                DupProgressEvent {
+                    hashed: poll_dup.hashed.load(Ordering::Relaxed),
+                    total: poll_dup.total.load(Ordering::Relaxed),
+                    bytes: poll_dup.bytes.load(Ordering::Relaxed),
+                },
+            );
+            // ~3x/sec, snapshot the partial tree (more costly to build than the
+            // counters above) and push it so the building treemap stays current.
+            if tick % 3 == 0 {
+                let snap = scan::live_snapshot(&poll_live);
+                if !snap.children.is_empty() {
+                    let _ = poll_app.emit("scan-partial", snap);
+                }
+            }
+            if poll_done.load(Ordering::Relaxed) {
+                break;
+            }
         }
     });
 
     let scan_progress = progress.clone();
+    let scan_live = live.clone();
     let (full, files, dirs, errors) = tauri::async_runtime::spawn_blocking(move || {
         // Hold an App Nap assertion for the whole walk so throughput stays high
         // even if the user switches away from the window. Suppression is
         // process-wide, so this also protects the duplicate-hashing workers
         // running concurrently. Dropped when the walk returns.
         let _awake = power::KeepAwake::begin("Scanning disk usage");
-        let full = scan::scan_with_sink(&target, &scan_progress, Some(&sink as &dyn scan::FileSink));
+        let full = scan::scan_with_sink(&target, &scan_progress, Some(&sink as &dyn scan::FileSink), Some(scan_live));
         // `sink` drops here, closing the file stream so the pipeline can wind down.
         (
             full,

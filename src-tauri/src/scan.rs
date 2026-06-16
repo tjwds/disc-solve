@@ -16,7 +16,7 @@ use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// One node in the size tree. Files have no children; directories aggregate
 /// their descendants' on-disk size.
@@ -55,6 +55,60 @@ pub trait FileSink: Sync {
     fn file(&self, path: &str, size: u64);
 }
 
+/// A directory node in the live, partially-built tree maintained *during* a scan,
+/// so the frontend can render the treemap filling in behind the scanning overlay.
+/// Only directories are tracked; a directory's regular-file children are summed
+/// into `direct_size`/`direct_count` rather than stored individually (the final
+/// authoritative tree, built from [`walk`]'s return value, keeps every file).
+///
+/// Built top-down (a directory registers itself under its parent the moment it is
+/// entered) and sized continuously (each file adds to its parent as it is
+/// measured), so [`live_snapshot`] can be taken at any time from another thread.
+pub struct LiveDir {
+    name: String,
+    path: String,
+    category: Category,
+    direct_size: AtomicU64,
+    direct_count: AtomicU64,
+    children: Mutex<Vec<Arc<LiveDir>>>,
+}
+
+impl LiveDir {
+    fn new(path: &Path, category: Category) -> LiveDir {
+        LiveDir {
+            name: name_of(path),
+            path: path.display().to_string(),
+            category,
+            direct_size: AtomicU64::new(0),
+            direct_count: AtomicU64::new(0),
+            children: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Record a regular file measured directly inside this directory.
+    fn add_file(&self, size: u64) {
+        self.direct_size.fetch_add(size, Ordering::Relaxed);
+        self.direct_count.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Create the live root for a scan of `path`, to be shared with the progress
+/// poller before the walk begins and passed into [`scan_with_sink`].
+pub fn live_root(path: &Path) -> Arc<LiveDir> {
+    Arc::new(LiveDir::new(path, categorize(path, true)))
+}
+
+/// How `walk` threads the live tree through the recursion. `Off` disables live
+/// tracking entirely (tests, and the dup-only paths). `Root` marks the initial
+/// call, which adopts the pre-created [`live_root`]; `Under` is every descendant,
+/// carrying the parent directory whose children it populates.
+#[derive(Clone, Copy)]
+enum LiveLink<'a> {
+    Off,
+    Root(&'a Arc<LiveDir>),
+    Under(&'a Arc<LiveDir>),
+}
+
 struct Ctx<'a> {
     seen_inodes: Mutex<HashSet<(u64, u64)>>,
     progress: &'a Progress,
@@ -84,18 +138,29 @@ fn leaf(path: &Path, size: u64, is_symlink: bool, category: Category, mtime: i64
 
 /// Recursively scan `path` in parallel, reporting each regular file to `sink`
 /// (if any) as it is found, so a streaming consumer can run concurrently with
-/// the walk. Updates `progress` as it goes and returns a node even on error
-/// (size 0), so a single unreadable entry never aborts.
-pub fn scan_with_sink(path: &Path, progress: &Progress, sink: Option<&dyn FileSink>) -> Node {
+/// the walk. When `live` is given, the partial tree is populated as the walk
+/// proceeds (see [`LiveDir`]) so a poller can snapshot it. Updates `progress` as
+/// it goes and returns a node even on error (size 0), so a single unreadable
+/// entry never aborts.
+pub fn scan_with_sink(
+    path: &Path,
+    progress: &Progress,
+    sink: Option<&dyn FileSink>,
+    live: Option<Arc<LiveDir>>,
+) -> Node {
     let ctx = Ctx {
         seen_inodes: Mutex::new(HashSet::new()),
         progress,
         sink,
     };
-    walk(path, &ctx)
+    let link = match &live {
+        Some(root) => LiveLink::Root(root),
+        None => LiveLink::Off,
+    };
+    walk(path, &ctx, link)
 }
 
-fn walk(path: &Path, ctx: &Ctx) -> Node {
+fn walk(path: &Path, ctx: &Ctx, live: LiveLink) -> Node {
     let meta = match fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(_) => {
@@ -119,11 +184,28 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
         let size = meta.blocks() * 512;
         ctx.progress.files.fetch_add(1, Ordering::Relaxed);
         ctx.progress.bytes.fetch_add(size, Ordering::Relaxed);
+        if let LiveLink::Under(parent) = live {
+            parent.add_file(size);
+        }
         return leaf(path, size, true, Category::Other, meta.mtime());
     }
 
     if meta.is_dir() {
         ctx.progress.dirs_discovered.fetch_add(1, Ordering::Relaxed);
+        let category = categorize(path, true);
+        // This directory's node in the live tree: the pre-created root for the
+        // initial call, a freshly registered child otherwise. `None` when live
+        // tracking is off. Created before the walk so the structure appears as
+        // soon as the directory is entered.
+        let me: Option<Arc<LiveDir>> = match live {
+            LiveLink::Off => None,
+            LiveLink::Root(root) => Some(Arc::clone(root)),
+            LiveLink::Under(parent) => {
+                let node = Arc::new(LiveDir::new(path, category));
+                parent.children.lock().unwrap().push(Arc::clone(&node));
+                Some(node)
+            }
+        };
         let entries: Vec<fs::DirEntry> = match fs::read_dir(path) {
             Ok(rd) => rd.flatten().collect(),
             Err(_) => {
@@ -134,7 +216,13 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
         // Walk the children in parallel; rayon collects them in input order.
         let mut children: Vec<Node> = entries
             .into_par_iter()
-            .map(|e| walk(&e.path(), ctx))
+            .map(|e| {
+                let link = match &me {
+                    Some(node) => LiveLink::Under(node),
+                    None => LiveLink::Off,
+                };
+                walk(&e.path(), ctx, link)
+            })
             .collect();
         children.sort_by(|a, b| b.size.cmp(&a.size)); // largest first
         let total: u64 = children.iter().map(|c| c.size).sum();
@@ -153,7 +241,7 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
             size: total,
             is_dir: true,
             is_symlink: false,
-            category: categorize(path, true),
+            category,
             item_count: count,
             mtime,
             children,
@@ -176,6 +264,9 @@ fn walk(path: &Path, ctx: &Ctx) -> Node {
         let path_str = path.display().to_string();
         if let Some(sink) = ctx.sink {
             sink.file(&path_str, size);
+        }
+        if let LiveLink::Under(parent) = live {
+            parent.add_file(size);
         }
         Node {
             name: name_of(path),
@@ -241,6 +332,101 @@ pub fn pruned(node: &Node, min_size: u64, max_children: usize) -> Node {
         item_count: node.item_count,
         mtime: node.mtime,
         children: kept,
+    }
+}
+
+/// Hide directories below this size from the in-progress preview, so the
+/// building treemap stays a legible handful of large blocks rather than thousands
+/// of slivers. Coarser than the final tree's adaptive threshold — the preview is
+/// transient and shown dimmed behind the scanning overlay.
+const LIVE_MIN_SIZE: u64 = 2 << 20; // 2 MiB
+const LIVE_MAX_CHILDREN: usize = 64;
+const LIVE_MAX_DEPTH: usize = 7; // matches the treemap's own recursion cap
+
+/// Build a pruned display tree from the live, still-being-scanned [`LiveDir`]
+/// tree. Sizes are read from the live counters, so the result reflects whatever
+/// has been measured so far. Each directory's loose files (tracked only in
+/// aggregate) and its sub-threshold subdirectories fold into one "smaller items"
+/// tile, mirroring [`pruned`] so the treemap renders it the same way.
+pub fn live_snapshot(root: &Arc<LiveDir>) -> Node {
+    snapshot_dir(root, 0)
+}
+
+fn snapshot_dir(live: &Arc<LiveDir>, depth: usize) -> Node {
+    let direct_size = live.direct_size.load(Ordering::Relaxed);
+    let direct_count = live.direct_count.load(Ordering::Relaxed);
+    // Clone the child handles under a short lock so walkers can keep appending.
+    let kids: Vec<Arc<LiveDir>> = live.children.lock().unwrap().clone();
+
+    // Past the depth cap, don't expand further — report the subtree in aggregate.
+    if depth >= LIVE_MAX_DEPTH {
+        let (sub_size, sub_count) = kids.iter().fold((0u64, 0u64), |(s, c), k| {
+            let (ks, kc) = live_total(k);
+            (s + ks, c + kc)
+        });
+        return live_node(live, direct_size + sub_size, direct_count + sub_count, vec![]);
+    }
+
+    let mut subdirs: Vec<Node> = kids.iter().map(|k| snapshot_dir(k, depth + 1)).collect();
+    subdirs.sort_by(|a, b| b.size.cmp(&a.size));
+    let total_size = direct_size + subdirs.iter().map(|c| c.size).sum::<u64>();
+    let total_count = direct_count + subdirs.iter().map(|c| c.item_count).sum::<u64>();
+
+    // Loose files in this directory fold into the aggregate from the start.
+    let mut kept: Vec<Node> = Vec::new();
+    let mut dropped_size = direct_size;
+    let mut dropped_count = direct_count;
+    for (i, child) in subdirs.into_iter().enumerate() {
+        if i < LIVE_MAX_CHILDREN && child.size >= LIVE_MIN_SIZE {
+            kept.push(child);
+        } else {
+            dropped_size += child.size;
+            dropped_count += child.item_count;
+        }
+    }
+    if dropped_size > 0 {
+        kept.push(Node {
+            name: format!("{dropped_count} smaller items"),
+            path: String::new(),
+            size: dropped_size,
+            is_dir: false,
+            is_symlink: false,
+            // Tint the aggregate with the folder's own category so the building
+            // preview reads as a colored mosaic rather than blocks of grey.
+            category: live.category,
+            item_count: dropped_count,
+            mtime: 0,
+            children: vec![],
+        });
+        kept.sort_by(|a, b| b.size.cmp(&a.size));
+    }
+    live_node(live, total_size, total_count, kept)
+}
+
+/// Total measured (size, item count) at or below a live directory.
+fn live_total(live: &Arc<LiveDir>) -> (u64, u64) {
+    let kids = live.children.lock().unwrap().clone();
+    let mut size = live.direct_size.load(Ordering::Relaxed);
+    let mut count = live.direct_count.load(Ordering::Relaxed);
+    for k in &kids {
+        let (s, c) = live_total(k);
+        size += s;
+        count += c;
+    }
+    (size, count)
+}
+
+fn live_node(live: &Arc<LiveDir>, size: u64, item_count: u64, children: Vec<Node>) -> Node {
+    Node {
+        name: live.name.clone(),
+        path: live.path.clone(),
+        size,
+        is_dir: true,
+        is_symlink: false,
+        category: live.category,
+        item_count,
+        mtime: 0,
+        children,
     }
 }
 
@@ -311,9 +497,9 @@ mod tests {
     use std::io::Write;
     use std::path::PathBuf;
 
-    /// The tests don't stream files, so scan without a sink.
+    /// The tests don't stream files, so scan without a sink or live tree.
     fn scan(path: &Path, progress: &Progress) -> Node {
-        scan_with_sink(path, progress, None)
+        scan_with_sink(path, progress, None, None)
     }
 
     fn write_file(path: &Path, bytes: usize) {
@@ -426,12 +612,35 @@ mod tests {
         write_file(&sub.join("b.bin"), 50_000);
 
         let sink = Collect(std::sync::Mutex::new(Vec::new()));
-        let _ = scan_with_sink(root, &Progress::default(), Some(&sink));
+        let _ = scan_with_sink(root, &Progress::default(), Some(&sink), None);
 
         let mut got = sink.0.into_inner().unwrap();
         got.sort();
         let names: Vec<&str> = got.iter().map(|(p, _)| p.rsplit('/').next().unwrap()).collect();
         assert_eq!(names, vec!["a.bin", "b.bin"], "every regular file is streamed, dirs are not");
+    }
+
+    #[test]
+    fn live_snapshot_tracks_totals_during_the_walk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write_file(&root.join("a.bin"), 200_000);
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        write_file(&sub.join("b.bin"), 50_000);
+
+        let live = live_root(root);
+        let tree = scan_with_sink(root, &Progress::default(), None, Some(live.clone()));
+
+        // The live tree's totals match the authoritative scan once the walk ends.
+        let snap = live_snapshot(&live);
+        assert_eq!(snap.path, tree.path);
+        assert_eq!(snap.size, tree.size, "live total equals the scanned total");
+        assert_eq!(snap.item_count, tree.item_count);
+        // Both files are below LIVE_MIN_SIZE, so they fold into one aggregate tile,
+        // but the directory structure (root + sub) is still recorded.
+        let (sub_size, _) = live_total(live.children.lock().unwrap().first().unwrap());
+        assert!(sub_size >= 50_000, "the subdirectory's file was rolled up");
     }
 
     #[test]

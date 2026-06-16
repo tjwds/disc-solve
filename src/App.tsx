@@ -87,6 +87,7 @@ export default function App() {
   const [home, setHome] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
+  const [partial, setPartial] = useState<Node | null>(null); // tree built so far, shown while scanning
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("treemap");
   const [listSource, setListSource] = useState<ListSource | null>(null);
@@ -124,6 +125,7 @@ export default function App() {
       setLoading(true);
       setError(null);
       setProgress(null);
+      setPartial(null); // the previous scan's preview shouldn't linger into this one
       dupRunRef.current++; // invalidate any in-flight duplicate scan
       setDups(null);
       setDupProgress(null);
@@ -164,6 +166,13 @@ export default function App() {
     return () => unlisten?.();
   }, []);
 
+  // Snapshots of the tree as the scan builds it, rendered behind the overlay.
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    listen<Node>("scan-partial", (e) => setPartial(e.payload)).then((u) => (unlisten = u));
+    return () => unlisten?.();
+  }, []);
+
   useEffect(() => {
     if (ranOnce.current) return;
     ranOnce.current = true;
@@ -175,11 +184,18 @@ export default function App() {
       setTm({ local_snapshots: 3, latest_backup: "/Volumes/Backups" });
       runDups(demo);
       // Demo-only: the screenshot generator opens a view via URL hash
-      // (#list, #filter=node_modules, #dups). Ignored by the real (Tauri) app.
+      // (#list, #filter=node_modules, #dups, #scanning). Ignored by the real app.
       const f = /filter=([\w-]+)/.exec(window.location.hash);
       if (f) { setListSource(resolveFilter(f[1])); setView("list"); }
       else if (window.location.hash.includes("dups")) setView("dups");
       else if (window.location.hash.includes("list")) setView("list");
+      else if (window.location.hash.includes("scanning")) {
+        // Freeze the app mid-scan: the demo tree stands in for the partial tree
+        // that the Rust scanner streams, rendered behind the scanning overlay.
+        setPartial(demo);
+        setProgress({ files: 48213, bytes: 92 * 1024 ** 3, pct: 0.62 });
+        setLoading(true);
+      }
       return;
     }
     (async () => {
@@ -362,7 +378,7 @@ export default function App() {
           ) : loading || !root ? (
             <>
               <Breadcrumb stack={stack} onJump={(i) => setStack(stack.slice(0, i + 1))} />
-              <Scanning progress={progress} />
+              <ScanStage partial={partial} progress={progress} />
             </>
           ) : view === "list" ? (
             <>
@@ -461,13 +477,55 @@ function Scanning({ progress }: { progress: ScanProgress | null }) {
     ? `Scanned ${progress.files.toLocaleString()} files · ${fmtBytes(progress.bytes)}${progress.pct > 0 ? ` · ${pct}%` : ""}`
     : "Scanning…";
   return (
-    <div className="state">
-      <div className="scanning">
-        <div className={"scanbar" + (progress && progress.pct > 0 ? "" : " indet")}>
-          <div className="scanbar-fill" style={progress && progress.pct > 0 ? { width: `${pct}%` } : undefined} />
-        </div>
-        <div className="scan-count">{text}</div>
+    <div className="scanning">
+      <div className={"scanbar" + (progress && progress.pct > 0 ? "" : " indet")}>
+        <div className="scanbar-fill" style={progress && progress.pct > 0 ? { width: `${pct}%` } : undefined} />
       </div>
+      <div className="scan-count">{text}</div>
+    </div>
+  );
+}
+
+// While a scan runs, render the partial tree (streamed from the backend) and lay
+// a frosted overlay carrying the progress over it, so the treemap is visibly
+// built in the background.
+function ScanStage({ partial, progress }: { partial: Node | null; progress: ScanProgress | null }) {
+  return (
+    <div className="scanstage">
+      {partial && partial.children.length > 0 && <PreviewTreemap root={partial} />}
+      <div className="scan-overlay">
+        <Scanning progress={progress} />
+      </div>
+    </div>
+  );
+}
+
+// A static, non-interactive treemap of the scan-in-progress tree, colored by
+// category. No labels or hit targets — it sits behind the overlay as a preview.
+function PreviewTreemap({ root }: { root: Node }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setDims({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    setDims({ w: el.clientWidth, h: el.clientHeight });
+    return () => ro.disconnect();
+  }, []);
+
+  const tiles = useMemo(() => squarify(root, dims.w, dims.h), [root, dims]);
+
+  return (
+    <div className="treemap preview" ref={ref} aria-hidden>
+      {tiles.map((t, i) =>
+        t.group ? (
+          <div key={i} className="cell grp" style={{ left: t.x, top: t.y, width: Math.max(0, t.w), height: Math.max(0, t.h) }} />
+        ) : (
+          <div key={i} className="cell" style={{ left: t.x, top: t.y, width: Math.max(0, t.w), height: Math.max(0, t.h), background: CAT_COLOR[t.node.category] }} />
+        ),
+      )}
     </div>
   );
 }

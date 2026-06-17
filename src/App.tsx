@@ -489,6 +489,7 @@ function Scanning({ progress }: { progress: ScanProgress | null }) {
         <div className="scanbar-fill" style={progress && progress.pct > 0 ? { width: `${pct}%` } : undefined} />
       </div>
       <div className="scan-count">{text}</div>
+      <div className="scan-hint">Feel free to tab away — you'll get a notification when the scan is done.</div>
     </div>
   );
 }

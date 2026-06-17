@@ -172,6 +172,7 @@ body {
 .scanbar.indet .scanbar-fill { width: 40%; transition: none; animation: scanslide 1.1s ease-in-out infinite; }
 @keyframes scanslide { 0% { transform: translateX(-120%); } 100% { transform: translateX(280%); } }
 .scan-count { font-size: 13px; font-weight: 600; color: var(--ink); }
+.scan-hint { font-size: 12px; color: var(--ink-2); text-align: center; max-width: 320px; }
 
 /* scan-in-progress: the treemap builds behind a frosted, semi-transparent overlay */
 .scanstage { position: relative; flex: 1; display: flex; min-height: 0; }

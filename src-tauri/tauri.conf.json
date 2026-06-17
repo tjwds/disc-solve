@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "disc-solve",
+  "productName": "disk-solve",
   "version": "0.1.0",
-  "identifier": "com.discsolve.app",
+  "identifier": "com.disksolve.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1430",
@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "disc-solve",
+        "title": "disk-solve",
         "width": 1240,
         "height": 812,
         "minWidth": 880,

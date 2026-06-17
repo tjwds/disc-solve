@@ -457,7 +457,7 @@ function ConfirmModal({ data, onClose }: { data: ConfirmData; onClose: () => voi
 function Toolbar({ root, loading, view, onSetView, onRescan }: { root: Node | null; loading: boolean; view: ViewMode; onSetView: (m: ViewMode) => void; onRescan: () => void }) {
   return (
     <div className="titlebar" data-tauri-drag-region>
-      <div className="app-name">disc<span className="dot">·</span>solve</div>
+      <div className="app-name">disk<span className="dot">·</span>solve</div>
       <div className="toolbar">
         <div className="vol">{root ? root.name : "—"}</div>
         <div className="seg">

@@ -1,6 +1,6 @@
 //! Keep heavy work running at full speed when the window isn't frontmost.
 //!
-//! When disc-solve loses focus (or is fully occluded), macOS App Nap throttles
+//! When disk-solve loses focus (or is fully occluded), macOS App Nap throttles
 //! the process: it coalesces our timers and drops the CPU priority of every
 //! thread, so a scan or a duplicate hash slows to a crawl. Registering an
 //! `NSProcessInfo` *activity* tells the OS this is user-initiated work that

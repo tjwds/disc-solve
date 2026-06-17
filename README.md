@@ -1,21 +1,21 @@
-# disc-solve
+# disk-solve
 
 A modern, open-source disk-usage steward for macOS — the spiritual successor to
 Disk Inventory X, with organization and backup awareness. Built on
 [Tauri](https://tauri.app/) (Rust backend, React/TypeScript frontend).
 
-![disc-solve's treemap view: a colour-coded map of disk usage, with a dashboard sidebar showing the type breakdown, Time Machine status, and reclaimable suggestions](./assets/disc-solve.png)
+![disk-solve's treemap view: a colour-coded map of disk usage, with a dashboard sidebar showing the type breakdown, Time Machine status, and reclaimable suggestions](./assets/disk-solve.png)
 
 A recommendation opens as a filtered, sortable list — here, every project's
 `node_modules` across the disk, with on-disk size, item count, and how stale each
 one is, ready to move to the Trash:
 
-![disc-solve's list view filtered to node_modules folders, with size bars and last-modified staleness](./assets/list-view.png)
+![disk-solve's list view filtered to node_modules folders, with size bars and last-modified staleness](./assets/list-view.png)
 
 Duplicate detection runs on a background thread after the tree is on screen, then
 groups byte-identical files so you can keep one copy and reclaim the rest:
 
-![disc-solve's duplicates view: groups of identical files, each with a suggested copy to keep and the extras ready to trash](./assets/duplicates.png)
+![disk-solve's duplicates view: groups of identical files, each with a suggested copy to keep and the extras ready to trash](./assets/duplicates.png)
 
 > The screenshots above are generated from fabricated demo data (`makeDemoTree`
 > in `src/lib/demo.ts`) — never a real disk — by `npm run screenshot`, which

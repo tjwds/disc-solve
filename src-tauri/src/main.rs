@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    disc_solve_lib::run()
+    disk_solve_lib::run()
 }

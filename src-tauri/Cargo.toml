@@ -1,5 +1,5 @@
 [package]
-name = "disc-solve"
+name = "disk-solve"
 version = "0.1.0"
 description = "A modern, OSS disk-usage steward for macOS"
 authors = ["Joe Woods <code@joewoods.dev>"]
@@ -7,7 +7,7 @@ edition = "2021"
 
 [lib]
 # The `_lib` suffix keeps the lib name distinct from the bin name (see tauri docs).
-name = "disc_solve_lib"
+name = "disk_solve_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

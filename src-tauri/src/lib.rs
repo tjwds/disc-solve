@@ -1,4 +1,4 @@
-//! Tauri command surface for disc-solve.
+//! Tauri command surface for disk-solve.
 //!
 //! Safety posture:
 //! - `scan_path` is read-only (see [`scan`]).
@@ -316,7 +316,7 @@ pub fn run() {
             home_dir,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running disc-solve");
+        .expect("error while running disk-solve");
 }
 
 #[cfg(test)]

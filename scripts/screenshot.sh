@@ -2,7 +2,7 @@
 #
 # Regenerate the README screenshots (assets/*.png) from demo data.
 #
-# disc-solve's demo mode is pure, fabricated data (see makeDemoTree in
+# disk-solve's demo mode is pure, fabricated data (see makeDemoTree in
 # src/lib/demo.ts) that renders whenever the UI runs outside Tauri - i.e. in a
 # plain browser. So, unlike the-wall (whose demo needs live shells and must
 # capture the native app), we build the frontend, serve it with `vite preview`,
@@ -40,13 +40,13 @@ fi
 [ -n "$CHROME" ] || { echo "error: no Chrome/Chromium found (set \$CHROME)." >&2; exit 1; }
 command -v magick >/dev/null || { echo "error: ImageMagick (magick) not found - 'brew install imagemagick'." >&2; exit 1; }
 
-WORKDIR="$(mktemp -d -t disc-solve-shot)"
+WORKDIR="$(mktemp -d -t disk-solve-shot)"
 PREVIEW_PID=""
 cleanup() {
   [ -n "$PREVIEW_PID" ] && kill "$PREVIEW_PID" 2>/dev/null || true
   # vite preview can outlive its parent; reap it by port, but only if it's ours.
   for pid in $(lsof -ti "tcp:$PORT" 2>/dev/null); do
-    ps -o command= -p "$pid" 2>/dev/null | grep -q "disc-solve/node_modules" && kill "$pid" 2>/dev/null || true
+    ps -o command= -p "$pid" 2>/dev/null | grep -q "disk-solve/node_modules" && kill "$pid" 2>/dev/null || true
   done
   rm -rf "$WORKDIR" || true
 }
@@ -98,9 +98,9 @@ shoot() { # url-hash out-name label
   dress "$raw" "$OUT_DIR/$name.png"
 }
 
-shoot "" "disc-solve" "treemap"
+shoot "" "disk-solve" "treemap"
 shoot "#filter=node_modules" "list-view" "reclaim list"
 shoot "#dups" "duplicates" "duplicates"
 
 echo "Done:"
-for f in disc-solve list-view duplicates; do magick identify -format "  assets/%f  %wx%h\n" "$OUT_DIR/$f.png"; done
+for f in disk-solve list-view duplicates; do magick identify -format "  assets/%f  %wx%h\n" "$OUT_DIR/$f.png"; done

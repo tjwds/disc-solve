@@ -9,6 +9,7 @@ import { sortItems, resolveFilter, collectByName, withoutAggregates, parentName,
 import { removePaths } from "./lib/tree";
 import { baseName, keeperOf, pruneDupReport } from "./lib/dups";
 import { makeDemoTree, demoDuplicates } from "./lib/demo";
+import { notify } from "./lib/notify";
 import * as api from "./lib/api";
 
 const CAT_COLOR: Record<Category, string> = {
@@ -137,6 +138,12 @@ export default function App() {
         setSelected(null);
         setListSource(null);
         setChecked(new Set());
+        // Scans of a large disk can run for a while, so ping the user when one
+        // finishes — but only if they've switched away from the window, since a
+        // notification over the treemap they're already watching is just noise.
+        if (!document.hasFocus()) {
+          notify("Scan complete", `${result.files.toLocaleString()} files · ${fmtBytes(result.tree.size)}`);
+        }
         runDups(); // collect the report once the streamed hashing finishes
       } catch (e) {
         setError(String(e));

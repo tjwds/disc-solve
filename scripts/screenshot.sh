@@ -22,7 +22,7 @@ OUT_DIR="$REPO/assets"
 PORT=4319
 SCALE=2                 # device pixel ratio: 2 = crisp retina output
 W=1240; H=812           # logical window size (matches tauri.conf.json defaults)
-RENDER_MS=3000          # virtual time for React to mount + the demo to settle
+RENDER_MS=3000          # settle time for React to mount + the demo to render
 
 cd "$REPO"
 mkdir -p "$OUT_DIR"
@@ -88,13 +88,16 @@ dress() { # raw.png -> out.png
 
 shoot() { # url-hash out-name label
   local hash="$1" name="$2" label="$3"
-  local raw="$WORKDIR/$name.raw.png"
+  local raw="$WORKDIR/$name.raw.png" log="$WORKDIR/$name.cap.log"
   echo "Capturing $label -> assets/$name.png"
-  "$CHROME" --headless --disable-gpu --hide-scrollbars \
-    --force-device-scale-factor="$SCALE" --window-size="$W,$H" \
-    --virtual-time-budget="$RENDER_MS" \
-    --screenshot="$raw" "http://localhost:$PORT/$hash" >/dev/null 2>&1
-  [ -s "$raw" ] || { echo "error: capture failed for $label" >&2; exit 1; }
+  # Capture over CDP with an emulated viewport (see scripts/capture.mjs) so the
+  # page lays out into exactly the captured size — a plain --screenshot leaves an
+  # empty strip below the content because the layout viewport is shorter than the
+  # OS window by the platform frame height.
+  if ! node "$REPO/scripts/capture.mjs" "$CHROME" "http://localhost:$PORT/$hash" "$raw" "$W" "$H" "$SCALE" "$RENDER_MS" >"$log" 2>&1; then
+    echo "error: capture failed for $label - see $log" >&2; cat "$log" >&2; exit 1
+  fi
+  [ -s "$raw" ] || { echo "error: capture produced no image for $label" >&2; exit 1; }
   dress "$raw" "$OUT_DIR/$name.png"
 }
 

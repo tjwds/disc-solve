@@ -102,6 +102,7 @@ export default function App() {
   const [dupScanning, setDupScanning] = useState(false);
   const [dupProgress, setDupProgress] = useState<{ hashed: number; total: number } | null>(null);
   const [sortOpen, setSortOpen] = useState(false);
+  const [sortInitial, setSortInitial] = useState<"overview" | "locations" | "reviewer" | "complete">("overview");
   const sortOpenRef = useRef(false);
   sortOpenRef.current = sortOpen;
   const ranOnce = useRef(false);
@@ -198,7 +199,11 @@ export default function App() {
       // (#list, #filter=node_modules, #dups, #scanning). Ignored by the real app.
       const f = /filter=([\w-]+)/.exec(window.location.hash);
       if (f) { setListSource(resolveFilter(f[1])); setView("list"); }
-      else if (window.location.hash.includes("sort")) setSortOpen(true);
+      else if (window.location.hash.includes("sort")) {
+        const h = window.location.hash;
+        setSortInitial(h.includes("locations") ? "locations" : h.includes("review") ? "reviewer" : h.includes("done") || h.includes("complete") ? "complete" : "overview");
+        setSortOpen(true);
+      }
       else if (window.location.hash.includes("dups")) setView("dups");
       else if (window.location.hash.includes("list")) setView("list");
       else if (window.location.hash.includes("scanning")) {
@@ -377,7 +382,7 @@ export default function App() {
     if (selected?.path) trashPaths([selected.path], `${selected.name} (${fmtBytes(selected.size)})`);
   }, [selected, trashPaths]);
 
-  if (sortOpen) return <SortFlow home={home} onClose={() => setSortOpen(false)} />;
+  if (sortOpen) return <SortFlow home={home} initial={sortInitial} onClose={() => setSortOpen(false)} />;
 
   return (
     <div className="app">

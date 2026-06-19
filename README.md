@@ -17,10 +17,29 @@ groups byte-identical files so you can keep one copy and reclaim the rest:
 
 ![disk-solve's duplicates view: groups of identical files, each with a suggested copy to keep and the extras ready to trash](./assets/duplicates.png)
 
+**Get organized** turns the loose images piling up on the Desktop and in Downloads
+into a fast, keyboard-driven pass: view each one, then file it to a configured
+location (`1`–`9`), send it to the Trash (`0`), or skip it (`s`), with multi-level
+undo (`⌘Z`). Every action is a reversible move, so nothing is ever hard-deleted.
+
+![disk-solve's Get organized reviewer: a loose image previewed full-size, a filmstrip of the queue showing each file's outcome, and a panel of filing destinations bound to number keys](./assets/sort-reviewer.png)
+
+You pick a pile to work through, and the filing locations are configurable and
+persist between launches — each bound to a number key, with Apple Photos available
+as a destination:
+
+![disk-solve's Get organized overview: loose-image piles for Desktop and Downloads, with the configured filing locations](./assets/get-organized.png)
+
+![disk-solve's filing locations settings: a reorderable list of destinations bound to number keys, plus the folders to tidy](./assets/filing-locations.png)
+
+When the batch is done, a summary shows where everything went and offers to empty the Trash:
+
+![disk-solve's sorting summary: counts of filed, trashed, and skipped images, a per-destination breakdown, and reclaimable space](./assets/sort-summary.png)
+
 > The screenshots above are generated from fabricated demo data (`makeDemoTree`
-> in `src/lib/demo.ts`) — never a real disk — by `npm run screenshot`, which
-> builds the UI, serves it, and captures it with headless Chrome. See
-> [`scripts/screenshot.sh`](./scripts/screenshot.sh).
+> in `src/lib/demo.ts` and `demoImages` in `src/lib/sort.ts`) — never a real disk —
+> by `npm run screenshot`, which builds the UI, serves it, and captures it with
+> headless Chrome. See [`scripts/screenshot.sh`](./scripts/screenshot.sh).
 
 ## Safety
 
@@ -82,6 +101,10 @@ cargo test --manifest-path src-tauri/Cargo.toml   # scanner, safety guard, actio
   the report consistent after copies are trashed.
 - `src/App.tsx` — the UI: sidebar dashboard, drill-down treemap, breadcrumb, inspector,
   the filtered list view, and the duplicates view.
+- `src-tauri/src/sort.rs` + `src/SortFlow.tsx` — the "Get organized" flow: lists loose
+  images in the chosen folders, then files (moves), trashes, or skips each one. Filing
+  settings persist as JSON; every action is a reversible move (the in-app undo), and
+  previews are shown via the asset protocol.
 
 ## License
 

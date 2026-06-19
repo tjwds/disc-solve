@@ -104,6 +104,13 @@ shoot() { # url-hash out-name label
 shoot "" "disk-solve" "treemap"
 shoot "#filter=node_modules" "list-view" "reclaim list"
 shoot "#dups" "duplicates" "duplicates"
+# "Get organized" flow — demo deep links seed each screen (see SortFlow.tsx).
+shoot "#sort" "get-organized" "get organized overview"
+shoot "#sort-locations" "filing-locations" "filing locations"
+shoot "#sort-review" "sort-reviewer" "sort reviewer"
+shoot "#sort-done" "sort-summary" "sort summary"
 
 echo "Done:"
-for f in disk-solve list-view duplicates; do magick identify -format "  assets/%f  %wx%h\n" "$OUT_DIR/$f.png"; done
+for f in disk-solve list-view duplicates get-organized filing-locations sort-reviewer sort-summary; do
+  magick identify -format "  assets/%f  %wx%h\n" "$OUT_DIR/$f.png"
+done

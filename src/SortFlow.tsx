@@ -56,17 +56,50 @@ interface Summary {
   byDest: { name: string; count: number; badge: string }[];
 }
 
+/** Which screen to open on mount. Anything but "overview" is a demo deep link
+ *  used by the screenshot tool (see scripts/screenshot.sh). */
+type SortInitial = "overview" | "locations" | "reviewer" | "complete";
+
+interface DemoSeed { statuses: (Status | null)[]; idx: number; history: UndoEntry[] }
+
+// Demo-only: a representative finished session, so the summary screen renders
+// standalone for a screenshot.
+const DEMO_SUMMARY: Summary = {
+  filed: 31, trashed: 40, skipped: 13, reclaimable: 1_181_116_006,
+  byDest: [
+    { name: "Pictures", count: 18, badge: "#f0a35e" },
+    { name: "Apple Photos", count: 9, badge: "#a855f7" },
+    { name: "Screenshots", count: 4, badge: "#3fb0a4" },
+  ],
+};
+
+// Demo-only: a representative mid-review state, so the reviewer screen renders
+// standalone (a few thumbnails resolved, the rest pending) for a screenshot.
+function demoReviewSeed(queue: ImageFile[], dests: Destination[]): DemoSeed {
+  const statuses: (Status | null)[] = queue.map(() => null);
+  const fileTo = (d?: Destination): Status => (d ? { type: "file", destId: d.id, destName: d.name } : { type: "skip" });
+  if (queue.length > 0) statuses[0] = fileTo(dests[0]);
+  if (queue.length > 1) statuses[1] = fileTo(dests[1] ?? dests[0]);
+  if (queue.length > 2) statuses[2] = { type: "trash" };
+  if (queue.length > 3) statuses[3] = { type: "skip" };
+  const history: UndoEntry[] = [];
+  statuses.forEach((s, i) => { if (s) history.push({ index: i, prev: null, undo: async () => {}, removed: s.type !== "skip" }); });
+  return { statuses, idx: Math.min(4, Math.max(0, queue.length - 1)), history };
+}
+
 // =============================================================================
-export default function SortFlow({ home, onClose }: { home: string | null; onClose: () => void }) {
+export default function SortFlow({ home, onClose, initial = "overview" }: { home: string | null; onClose: () => void; initial?: SortInitial }) {
   const tauri = api.isTauri();
   const [settings, setSettings] = useState<SortSettings | null>(null);
   const [images, setImages] = useState<ImageFile[] | null>(null);
-  const [step, setStep] = useState<"overview" | "reviewer" | "complete">("overview");
+  const [step, setStep] = useState<"overview" | "reviewer" | "complete">(
+    initial === "reviewer" ? "reviewer" : initial === "complete" ? "complete" : "overview",
+  );
   // Filing locations is an overlay, not a step, so opening it mid-review keeps
   // the reviewer mounted (and its session intact) underneath.
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(initial === "locations");
   const [queue, setQueue] = useState<ImageFile[]>([]);
-  const [summary, setSummary] = useState<Summary | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(initial === "complete" && !tauri ? DEMO_SUMMARY : null);
   const [session, setSession] = useState(0); // bump to remount the reviewer fresh
   const [error, setError] = useState<string | null>(null);
 
@@ -91,7 +124,11 @@ export default function SortFlow({ home, onClose }: { home: string | null; onClo
     (async () => {
       try {
         const imgs = tauri ? await api.listLooseImages(settings.sources) : demoImages();
-        if (!cancelled) setImages(imgs);
+        if (!cancelled) {
+          setImages(imgs);
+          // Demo deep link straight into the reviewer (screenshot tool).
+          if (initial === "reviewer" && imgs.length) { setQueue(imgs); setSession((s) => s + 1); }
+        }
       } catch (e) {
         if (!cancelled) { setError(String(e)); setImages([]); }
       }
@@ -140,6 +177,7 @@ export default function SortFlow({ home, onClose }: { home: string | null; onClo
         <Reviewer
           key={session}
           queue={queue} destinations={settings.destinations} tauri={tauri} active={!settingsOpen}
+          demoSeed={!tauri && initial === "reviewer" && queue.length ? demoReviewSeed(queue, settings.destinations) : undefined}
           onComplete={onComplete} onExit={() => setStep("overview")} onError={setError}
           onRemoveImage={removeImage} onRestoreImage={restoreImage}
         />
@@ -386,15 +424,15 @@ function SettingsPanel({ settings, images, tauri, home, onChange, onClose }: {
 }
 
 // ---- reviewer ----------------------------------------------------------------
-function Reviewer({ queue, destinations, tauri, active, onComplete, onExit, onError, onRemoveImage, onRestoreImage }: {
-  queue: ImageFile[]; destinations: Destination[]; tauri: boolean; active: boolean;
+function Reviewer({ queue, destinations, tauri, active, demoSeed, onComplete, onExit, onError, onRemoveImage, onRestoreImage }: {
+  queue: ImageFile[]; destinations: Destination[]; tauri: boolean; active: boolean; demoSeed?: DemoSeed;
   onComplete: (s: Summary) => void; onExit: () => void; onError: (e: string) => void;
   onRemoveImage: (path: string) => void; onRestoreImage: (img: ImageFile) => void;
 }) {
   const dests = destinations.slice(0, 9); // keys 1–9
-  const [idx, setIdx] = useState(0);
-  const [statuses, setStatuses] = useState<(Status | null)[]>(() => queue.map(() => null));
-  const [history, setHistory] = useState<UndoEntry[]>([]);
+  const [idx, setIdx] = useState(demoSeed?.idx ?? 0);
+  const [statuses, setStatuses] = useState<(Status | null)[]>(() => demoSeed?.statuses ?? queue.map(() => null));
+  const [history, setHistory] = useState<UndoEntry[]>(() => demoSeed?.history ?? []);
   const [toast, setToast] = useState<{ text: string; badge: string; icon: "check" | "trash" | "skip" | "undo" } | null>(null);
   const [busy, setBusy] = useState(false);
   const [dims, setDims] = useState<Record<string, string>>({});

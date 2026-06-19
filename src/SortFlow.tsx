@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import * as api from "./lib/api";
 import { fmtBytes } from "./lib/format";
@@ -423,6 +423,11 @@ function SettingsPanel({ settings, images, tauri, home, onChange, onClose }: {
   );
 }
 
+// Filmstrip windowing: thumbnail row stride (80px cell + 8px gap) and how many
+// extra rows to render beyond the viewport so scrolling never reveals a gap.
+const THUMB_STRIDE = 88;
+const THUMB_OVERSCAN = 6;
+
 // ---- reviewer ----------------------------------------------------------------
 function Reviewer({ queue, destinations, tauri, active, demoSeed, onComplete, onExit, onError, onRemoveImage, onRestoreImage }: {
   queue: ImageFile[]; destinations: Destination[]; tauri: boolean; active: boolean; demoSeed?: DemoSeed;
@@ -437,6 +442,13 @@ function Reviewer({ queue, destinations, tauri, active, demoSeed, onComplete, on
   const [busy, setBusy] = useState(false);
   const [dims, setDims] = useState<Record<string, string>>({});
   const toastTimer = useRef<number | undefined>(undefined);
+
+  // Window the filmstrip: only the thumbnails in view are mounted, so a pile of
+  // hundreds/thousands of images opens at once instead of building every cell
+  // (and its <img>) up front. Mirrors the list view's windowing in App.tsx.
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [stripScroll, setStripScroll] = useState(0);
+  const [stripH, setStripH] = useState(640);
 
   const processed = statuses.filter(Boolean).length;
   const done = processed === queue.length;
@@ -545,6 +557,17 @@ function Reviewer({ queue, destinations, tauri, active, demoSeed, onComplete, on
     return () => window.removeEventListener("keydown", h);
   }, []);
 
+  // Measure the filmstrip's height so the visible window tracks its real size.
+  useLayoutEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const measure = () => setStripH(el.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const summary = useMemo((): Summary => {
     let filed = 0, trashed = 0, skipped = 0, reclaimable = 0;
     const byDest = new Map<string, { name: string; count: number; badge: string }>();
@@ -567,6 +590,11 @@ function Reviewer({ queue, destinations, tauri, active, demoSeed, onComplete, on
   const cur = queue[idx];
   const curDim = cur ? (dims[cur.path] ?? cur.dim) : undefined;
 
+  // Visible slice of the filmstrip, with overscan above and below.
+  const tTotal = queue.length;
+  const tStart = Math.max(0, Math.floor(stripScroll / THUMB_STRIDE) - THUMB_OVERSCAN);
+  const tEnd = Math.min(tTotal, Math.ceil((stripScroll + stripH) / THUMB_STRIDE) + THUMB_OVERSCAN);
+
   return (
     <div className="sf-rbody">
       {/* filmstrip */}
@@ -575,14 +603,19 @@ function Reviewer({ queue, destinations, tauri, active, demoSeed, onComplete, on
           <div className="sf-pcap"><span>Reviewed</span><b>{processed} / {queue.length}</b></div>
           <div className="sf-pbar"><i style={{ width: `${(processed / Math.max(1, queue.length)) * 100}%` }} /></div>
         </div>
-        <div className="sf-strip-list">
-          {queue.map((f, i) => (
-            <div key={f.path} className={"sf-thumb" + (i === idx ? " cur" : "") + (statuses[i] ? " done" : "")} onClick={() => setIdx(i)}>
-              <img src={previewSrc(f, tauri)} alt="" draggable={false} loading="lazy" decoding="async" />
-              <span className="sf-num">{i + 1}</span>
-              <Badge status={statuses[i]} dests={dests} />
-            </div>
-          ))}
+        <div className="sf-strip-list" ref={stripRef} onScroll={(e) => setStripScroll(e.currentTarget.scrollTop)}>
+          <div style={{ height: tStart * THUMB_STRIDE }} />
+          {queue.slice(tStart, tEnd).map((f, j) => {
+            const i = tStart + j;
+            return (
+              <div key={f.path} className={"sf-thumb" + (i === idx ? " cur" : "") + (statuses[i] ? " done" : "")} onClick={() => setIdx(i)}>
+                <img src={previewSrc(f, tauri)} alt="" draggable={false} loading="lazy" decoding="async" />
+                <span className="sf-num">{i + 1}</span>
+                <Badge status={statuses[i]} dests={dests} />
+              </div>
+            );
+          })}
+          <div style={{ height: (tTotal - tEnd) * THUMB_STRIDE }} />
         </div>
       </aside>
 

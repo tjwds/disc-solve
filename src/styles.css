@@ -388,7 +388,7 @@ body {
 .sf-pbar { height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
 .sf-pbar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.2s ease; }
 .sf-strip-list { flex: 1; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-.sf-thumb { position: relative; border-radius: 9px; overflow: hidden; height: 80px; background: var(--mat); border: 1px solid var(--line); cursor: pointer; flex: 0 0 auto; }
+.sf-thumb { position: relative; border-radius: 9px; overflow: hidden; height: 80px; background: var(--mat); border: 1px solid var(--line); cursor: pointer; flex: 0 0 auto; content-visibility: auto; contain-intrinsic-size: auto 80px; }
 .sf-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .sf-thumb.cur { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 .sf-thumb.done { opacity: 0.45; }

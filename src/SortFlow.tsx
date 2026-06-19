@@ -578,7 +578,7 @@ function Reviewer({ queue, destinations, tauri, active, demoSeed, onComplete, on
         <div className="sf-strip-list">
           {queue.map((f, i) => (
             <div key={f.path} className={"sf-thumb" + (i === idx ? " cur" : "") + (statuses[i] ? " done" : "")} onClick={() => setIdx(i)}>
-              <img src={previewSrc(f, tauri)} alt="" draggable={false} />
+              <img src={previewSrc(f, tauri)} alt="" draggable={false} loading="lazy" decoding="async" />
               <span className="sf-num">{i + 1}</span>
               <Badge status={statuses[i]} dests={dests} />
             </div>

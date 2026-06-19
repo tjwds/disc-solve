@@ -1,14 +1,12 @@
 # disk-solve
 
-A modern, open-source disk-usage steward for macOS — the spiritual successor to
-Disk Inventory X, with organization and backup awareness. Built on
-[Tauri](https://tauri.app/) (Rust backend, React/TypeScript frontend).
+A modern, open-source disk-usage steward for macOS, with organization and backup awareness. Built with
+[Tauri](https://tauri.app/) and React.
 
 ![disk-solve's treemap view: a colour-coded map of disk usage, with a dashboard sidebar showing the type breakdown, Time Machine status, and reclaimable suggestions](./assets/disk-solve.png)
 
 A recommendation opens as a filtered, sortable list — here, every project's
-`node_modules` across the disk, with on-disk size, item count, and how stale each
-one is, ready to move to the Trash:
+`node_modules` across the disk, with on-disk size, item count, and last-modified date.  You can move unneeded files and directories to your Trash:
 
 ![disk-solve's list view filtered to node_modules folders, with size bars and last-modified staleness](./assets/list-view.png)
 
@@ -17,7 +15,7 @@ groups byte-identical files so you can keep one copy and reclaim the rest:
 
 ![disk-solve's duplicates view: groups of identical files, each with a suggested copy to keep and the extras ready to trash](./assets/duplicates.png)
 
-**Get organized** turns the loose images piling up on the Desktop and in Downloads
+**Get organized** turns the loose images piling up on the Desktop, in Downloads, and anywhere else
 into a fast, keyboard-driven pass: view each one, then file it to a configured
 location (`1`–`9`), send it to the Trash (`0`), or skip it (`s`), with multi-level
 undo (`⌘Z`). Every action is a reversible move, so nothing is ever hard-deleted.
@@ -61,7 +59,10 @@ The app is read-only by default and treats deletion with caution:
 
 ## Develop
 
-Requires Node and a Rust toolchain.
+> [!NOTE]
+> disk⋅solve currently only supports macOS.
+
+See [the Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for the complete list of dependencies.
 
 ```sh
 npm install

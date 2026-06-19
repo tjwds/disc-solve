@@ -13,12 +13,13 @@ mod dups;
 mod power;
 mod safety;
 mod scan;
+mod sort;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
 /// Streamed to the frontend as `scan-progress` while a scan runs. The bar shows
 /// `bytes / total` (a real, monotonic fraction); `total` is the volume's used bytes.
@@ -299,6 +300,82 @@ fn home_dir() -> Option<String> {
     std::env::var_os("HOME").map(|h| h.to_string_lossy().into_owned())
 }
 
+// ---- "Get organized" sort flow ------------------------------------------------
+
+fn home_path() -> Result<PathBuf, String> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Could not locate the home directory".to_string())
+}
+
+/// Where the sort flow's settings live (JSON in the app config dir).
+fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("sort-settings.json"))
+}
+
+/// Load saved filing settings, or first-run defaults if none are stored (or the
+/// file is unreadable/corrupt — we never block the UI on a bad config file).
+#[tauri::command]
+fn load_settings(app: tauri::AppHandle) -> Result<sort::Settings, String> {
+    let home = home_path()?;
+    if let Ok(txt) = std::fs::read_to_string(settings_path(&app)?) {
+        if let Ok(s) = serde_json::from_str::<sort::Settings>(&txt) {
+            return Ok(s);
+        }
+    }
+    // First run: never suggest a folder the user doesn't actually have.
+    Ok(sort::Settings::defaults(&home).retaining_existing(|p| Path::new(p).exists()))
+}
+
+#[tauri::command]
+fn save_settings(app: tauri::AppHandle, settings: sort::Settings) -> Result<(), String> {
+    let path = settings_path(&app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let txt = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    std::fs::write(&path, txt).map_err(|e| e.to_string())
+}
+
+/// List the loose images at the top level of each folder, newest first.
+#[tauri::command]
+fn list_loose_images(folders: Vec<String>) -> Vec<sort::ImageFile> {
+    sort::list_loose_images(&folders)
+}
+
+/// Move an image into a destination folder. Returns the new path (for undo).
+#[tauri::command]
+fn file_image(path: String, dest_dir: String) -> Result<String, String> {
+    sort::file_image(&PathBuf::from(path), &PathBuf::from(dest_dir))
+}
+
+/// Import an image into Apple Photos, then trash the original. Returns the
+/// in-Trash path of the original (for undo).
+#[tauri::command]
+fn file_to_photos(path: String) -> Result<String, String> {
+    sort::file_to_photos(&PathBuf::from(path), &home_path()?)
+}
+
+/// Move an image into `~/.Trash` (recoverable). Returns the in-Trash path (for undo).
+#[tauri::command]
+fn sort_trash(path: String) -> Result<String, String> {
+    sort::trash_into(&PathBuf::from(path), &home_path()?)
+}
+
+/// Undo a file/trash action by moving the file back to its original location.
+#[tauri::command]
+fn sort_restore(from: String, to: String) -> Result<(), String> {
+    sort::move_to(&PathBuf::from(from), &PathBuf::from(to))
+}
+
+/// Native folder picker for adding a filing location or source folder. The
+/// `prompt` is shown in the macOS picker so it reflects what's being chosen.
+#[tauri::command]
+fn choose_folder(prompt: Option<String>) -> Result<Option<String>, String> {
+    sort::choose_folder(prompt.as_deref().unwrap_or("Choose a folder"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -315,6 +392,14 @@ pub fn run() {
             open_trash,
             time_machine_status,
             home_dir,
+            load_settings,
+            save_settings,
+            list_loose_images,
+            file_image,
+            file_to_photos,
+            sort_trash,
+            sort_restore,
+            choose_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running disk-solve");

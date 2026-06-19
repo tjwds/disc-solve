@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { DupReport, Node, ScanResult, TimeMachineStatus } from "./types";
+import type { ImageFile, SortSettings } from "./sort";
 
 /** True when running inside the Tauri shell (vs. a plain browser dev preview). */
 export function isTauri(): boolean {
@@ -50,4 +51,45 @@ export function openTrash(): Promise<void> {
 
 export function timeMachineStatus(): Promise<TimeMachineStatus> {
   return invoke("time_machine_status");
+}
+
+// ---- "Get organized" sort flow ----
+
+export function loadSettings(): Promise<SortSettings> {
+  return invoke("load_settings");
+}
+
+export function saveSettings(settings: SortSettings): Promise<void> {
+  return invoke("save_settings", { settings });
+}
+
+/** Loose images at the top level of each folder, newest first. */
+export function listLooseImages(folders: string[]): Promise<ImageFile[]> {
+  return invoke("list_loose_images", { folders });
+}
+
+/** Move an image into a destination folder; resolves to its new path (for undo). */
+export function fileImage(path: string, destDir: string): Promise<string> {
+  return invoke("file_image", { path, destDir });
+}
+
+/** Import an image into Apple Photos and trash the original; resolves to the
+ *  in-Trash path of the original (for undo). */
+export function fileToPhotos(path: string): Promise<string> {
+  return invoke("file_to_photos", { path });
+}
+
+/** Move an image to the Trash; resolves to its in-Trash path (for undo). */
+export function sortTrash(path: string): Promise<string> {
+  return invoke("sort_trash", { path });
+}
+
+/** Undo a file/trash by moving the file from `from` back to `to`. */
+export function sortRestore(from: string, to: string): Promise<void> {
+  return invoke("sort_restore", { from, to });
+}
+
+/** Native folder picker; resolves to the chosen path, or null if cancelled. */
+export function chooseFolder(prompt?: string): Promise<string | null> {
+  return invoke("choose_folder", { prompt });
 }

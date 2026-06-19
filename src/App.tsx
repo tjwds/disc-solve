@@ -11,6 +11,7 @@ import { baseName, keeperOf, pruneDupReport } from "./lib/dups";
 import { makeDemoTree, demoDuplicates } from "./lib/demo";
 import { notify } from "./lib/notify";
 import * as api from "./lib/api";
+import SortFlow from "./SortFlow";
 
 const CAT_COLOR: Record<Category, string> = {
   dev: "#5b8def", video: "#e8716d", audio: "#c189d6", photo: "#f0a35e", docs: "#3fb0a4",
@@ -100,6 +101,9 @@ export default function App() {
   const [dups, setDups] = useState<DupReport | null>(null);
   const [dupScanning, setDupScanning] = useState(false);
   const [dupProgress, setDupProgress] = useState<{ hashed: number; total: number } | null>(null);
+  const [sortOpen, setSortOpen] = useState(false);
+  const sortOpenRef = useRef(false);
+  sortOpenRef.current = sortOpen;
   const ranOnce = useRef(false);
   const dupRunRef = useRef(0); // ignore results from a superseded duplicate scan
 
@@ -194,6 +198,7 @@ export default function App() {
       // (#list, #filter=node_modules, #dups, #scanning). Ignored by the real app.
       const f = /filter=([\w-]+)/.exec(window.location.hash);
       if (f) { setListSource(resolveFilter(f[1])); setView("list"); }
+      else if (window.location.hash.includes("sort")) setSortOpen(true);
       else if (window.location.hash.includes("dups")) setView("dups");
       else if (window.location.hash.includes("list")) setView("list");
       else if (window.location.hash.includes("scanning")) {
@@ -216,6 +221,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (sortOpenRef.current) return; // the sort flow owns the keyboard while open
       if (e.key === "Escape") setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
     };
     window.addEventListener("keydown", onKey);
@@ -371,9 +377,11 @@ export default function App() {
     if (selected?.path) trashPaths([selected.path], `${selected.name} (${fmtBytes(selected.size)})`);
   }, [selected, trashPaths]);
 
+  if (sortOpen) return <SortFlow home={home} onClose={() => setSortOpen(false)} />;
+
   return (
     <div className="app">
-      <Toolbar root={stack[0] ?? null} loading={loading} view={view} onSetView={setViewMode} onRescan={() => stack[0] && runScan(stack[0].path)} />
+      <Toolbar root={stack[0] ?? null} loading={loading} view={view} onSetView={setViewMode} onRescan={() => stack[0] && runScan(stack[0].path)} onOpenSort={() => setSortOpen(true)} />
       <div className="body">
         <Sidebar root={root} tm={tm} colorMap={colorMap} onRecommend={onRecommend} dups={dups} dupScanning={dupScanning} dupProgress={dupProgress} scanning={loading} onOpenDups={() => setView("dups")} />
         <main className="content">
@@ -461,7 +469,7 @@ function ConfirmModal({ data, onClose }: { data: ConfirmData; onClose: () => voi
   );
 }
 
-function Toolbar({ root, loading, view, onSetView, onRescan }: { root: Node | null; loading: boolean; view: ViewMode; onSetView: (m: ViewMode) => void; onRescan: () => void }) {
+function Toolbar({ root, loading, view, onSetView, onRescan, onOpenSort }: { root: Node | null; loading: boolean; view: ViewMode; onSetView: (m: ViewMode) => void; onRescan: () => void; onOpenSort: () => void }) {
   return (
     <div className="titlebar" data-tauri-drag-region>
       <div className="app-name">disk<span className="dot">·</span>solve</div>
@@ -472,6 +480,7 @@ function Toolbar({ root, loading, view, onSetView, onRescan }: { root: Node | nu
           <button className={view === "list" ? "on" : ""} onClick={() => onSetView("list")}>List</button>
           <button className={view === "dups" ? "on" : ""} onClick={() => onSetView("dups")}>Duplicates</button>
         </div>
+        <button className="btn" onClick={onOpenSort}>Get organized</button>
         <button className="btn primary" onClick={onRescan} disabled={loading}>{loading ? "Scanning…" : "Rescan"}</button>
       </div>
     </div>

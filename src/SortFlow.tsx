@@ -224,7 +224,9 @@ function SortTitlebar({ ctx, onClose, onSettings, view, onSelectView }: {
       <div className="sf-tb-tools">
         {onSelectView && <ViewSeg view={view ?? "organize"} onSelect={onSelectView} />}
         {onSettings && (<button className="sf-iconbtn" title="Filing locations" onClick={onSettings}><IcGear /></button>)}
-        <button className="sf-iconbtn" title="Close" onClick={onClose}><IcClose /></button>
+        {/* The seg itself navigates out of the sort flow, so the close button is
+            only needed where there's no seg (the Filing locations overlay). */}
+        {!onSelectView && <button className="sf-iconbtn" title="Close" onClick={onClose}><IcClose /></button>}
       </div>
     </div>
   );

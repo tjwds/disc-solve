@@ -125,6 +125,10 @@ export default function SortFlow({ home, onClose, initial = "overview", scope = 
   // opens the reviewer directly for that one folder.
   const folders = scope ? [scope] : (settings?.sources ?? []);
   const sourceKey = folders.join("|");
+  // When scoped, `sourceKey` doesn't depend on settings, so the effect would run
+  // once before settings load (and bail) and never again. Re-run when settings
+  // first arrive so the scoped reviewer actually loads.
+  const settingsReady = settings != null;
   useEffect(() => {
     if (!settings) return;
     let cancelled = false;
@@ -146,7 +150,7 @@ export default function SortFlow({ home, onClose, initial = "overview", scope = 
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tauri, sourceKey]);
+  }, [tauri, sourceKey, settingsReady]);
 
   const persistSettings = useCallback((next: SortSettings) => {
     setSettings(next);
@@ -215,10 +219,10 @@ function SortTitlebar({ ctx, onClose, onSettings, view, onSelectView }: {
   return (
     <div className="titlebar" data-tauri-drag-region>
       <div className="app-name">disk<span className="dot">·</span>solve</div>
-      {onSelectView && <ViewSeg view={view ?? "organize"} onSelect={onSelectView} />}
       <span className="sf-tb-sep">›</span>
       <span className="sf-tb-ctx">{ctx}</span>
       <div className="sf-tb-tools">
+        {onSelectView && <ViewSeg view={view ?? "organize"} onSelect={onSelectView} />}
         {onSettings && (<button className="sf-iconbtn" title="Filing locations" onClick={onSettings}><IcGear /></button>)}
         <button className="sf-iconbtn" title="Close" onClick={onClose}><IcClose /></button>
       </div>

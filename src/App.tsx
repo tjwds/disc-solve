@@ -416,7 +416,14 @@ export default function App() {
     setSortOpen(true);
   };
   const selectSeg = (m: SegView) => {
-    if (m === "organize") { openSort(root?.path ?? null, "reviewer"); return; }
+    if (m === "organize") {
+      // Mid-scan the navigation stack is stale (or empty), so scoping to the
+      // "current" folder would land on a leftover directory — fall back to the
+      // top-level Get organized overview instead.
+      const scope = loading ? null : (root?.path ?? null);
+      openSort(scope, scope ? "reviewer" : "overview");
+      return;
+    }
     if (sortOpen) closeSort();
     setViewMode(m);
   };

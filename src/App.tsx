@@ -10,8 +10,10 @@ import { removePaths } from "./lib/tree";
 import { baseName, keeperOf, pruneDupReport } from "./lib/dups";
 import { makeDemoTree, demoDuplicates } from "./lib/demo";
 import { notify } from "./lib/notify";
+import { demoImages, leafName } from "./lib/sort";
 import * as api from "./lib/api";
 import SortFlow from "./SortFlow";
+import { ViewSeg, type SegView } from "./ViewSeg";
 
 const CAT_COLOR: Record<Category, string> = {
   dev: "#5b8def", video: "#e8716d", audio: "#c189d6", photo: "#f0a35e", docs: "#3fb0a4",
@@ -103,6 +105,8 @@ export default function App() {
   const [dupProgress, setDupProgress] = useState<{ hashed: number; total: number } | null>(null);
   const [sortOpen, setSortOpen] = useState(false);
   const [sortInitial, setSortInitial] = useState<"overview" | "locations" | "reviewer" | "complete">("overview");
+  const [sortScope, setSortScope] = useState<string | null>(null); // folder to "Organize"; null = all configured sources
+  const [loose, setLoose] = useState<{ count: number; bytes: number; sources: string[] } | null>(null);
   const sortOpenRef = useRef(false);
   sortOpenRef.current = sortOpen;
   const ranOnce = useRef(false);
@@ -161,6 +165,26 @@ export default function App() {
     [runDups],
   );
 
+  // Count the loose images across the configured source folders, for the sidebar
+  // shortcut. Read-only (lstat + read_dir); refreshed on mount and when the sort
+  // flow closes, since a sorting session may have filed or trashed some.
+  const refreshLoose = useCallback(async () => {
+    try {
+      if (!api.isTauri()) {
+        const imgs = demoImages();
+        setLoose({ count: imgs.length, bytes: imgs.reduce((s, i) => s + i.size, 0), sources: [...new Set(imgs.map((i) => i.source))] });
+        return;
+      }
+      const s = await api.loadSettings();
+      const imgs = await api.listLooseImages(s.sources);
+      setLoose({ count: imgs.length, bytes: imgs.reduce((s, i) => s + i.size, 0), sources: s.sources.map(leafName) });
+    } catch {
+      /* keep the prior count on failure */
+    }
+  }, []);
+
+  const closeSort = useCallback(() => { setSortOpen(false); refreshLoose(); }, [refreshLoose]);
+
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     listen<ScanEvent>("scan-progress", (e) => {
@@ -184,6 +208,8 @@ export default function App() {
     listen<Node>("scan-partial", (e) => setPartial(e.payload)).then((u) => (unlisten = u));
     return () => unlisten?.();
   }, []);
+
+  useEffect(() => { refreshLoose(); }, [refreshLoose]);
 
   useEffect(() => {
     if (ranOnce.current) return;
@@ -382,13 +408,26 @@ export default function App() {
     if (selected?.path) trashPaths([selected.path], `${selected.name} (${fmtBytes(selected.size)})`);
   }, [selected, trashPaths]);
 
-  if (sortOpen) return <SortFlow home={home} initial={sortInitial} onClose={() => setSortOpen(false)} />;
+  // Open the sort flow either scoped to a folder (Organize on the current folder,
+  // straight into the reviewer) or unscoped (the sidebar's top-level overview).
+  const openSort = (scope: string | null, initial: "overview" | "reviewer") => {
+    setSortScope(scope);
+    setSortInitial(initial);
+    setSortOpen(true);
+  };
+  const selectSeg = (m: SegView) => {
+    if (m === "organize") { openSort(root?.path ?? null, "reviewer"); return; }
+    if (sortOpen) closeSort();
+    setViewMode(m);
+  };
+
+  if (sortOpen) return <SortFlow home={home} initial={sortInitial} scope={sortScope} onClose={closeSort} onSelectView={selectSeg} />;
 
   return (
     <div className="app">
-      <Toolbar root={stack[0] ?? null} loading={loading} view={view} onSetView={setViewMode} onRescan={() => stack[0] && runScan(stack[0].path)} onOpenSort={() => setSortOpen(true)} />
+      <Toolbar root={stack[0] ?? null} loading={loading} view={view} onSelectView={selectSeg} onRescan={() => stack[0] && runScan(stack[0].path)} />
       <div className="body">
-        <Sidebar root={root} tm={tm} colorMap={colorMap} onRecommend={onRecommend} dups={dups} dupScanning={dupScanning} dupProgress={dupProgress} scanning={loading} onOpenDups={() => setView("dups")} />
+        <Sidebar root={root} tm={tm} colorMap={colorMap} onRecommend={onRecommend} dups={dups} dupScanning={dupScanning} dupProgress={dupProgress} scanning={loading} onOpenDups={() => setView("dups")} loose={loose} onOrganize={() => openSort(null, "overview")} />
         <main className="content">
           {error ? (
             <>
@@ -474,18 +513,13 @@ function ConfirmModal({ data, onClose }: { data: ConfirmData; onClose: () => voi
   );
 }
 
-function Toolbar({ root, loading, view, onSetView, onRescan, onOpenSort }: { root: Node | null; loading: boolean; view: ViewMode; onSetView: (m: ViewMode) => void; onRescan: () => void; onOpenSort: () => void }) {
+function Toolbar({ root, loading, view, onSelectView, onRescan }: { root: Node | null; loading: boolean; view: ViewMode; onSelectView: (m: SegView) => void; onRescan: () => void }) {
   return (
     <div className="titlebar" data-tauri-drag-region>
       <div className="app-name">disk<span className="dot">·</span>solve</div>
       <div className="toolbar">
         <div className="vol">{root ? root.name : "—"}</div>
-        <div className="seg">
-          <button className={view === "treemap" ? "on" : ""} onClick={() => onSetView("treemap")}>Treemap</button>
-          <button className={view === "list" ? "on" : ""} onClick={() => onSetView("list")}>List</button>
-          <button className={view === "dups" ? "on" : ""} onClick={() => onSetView("dups")}>Duplicates</button>
-        </div>
-        <button className="btn" onClick={onOpenSort}>Get organized</button>
+        <ViewSeg view={view} onSelect={onSelectView} />
         <button className="btn primary" onClick={onRescan} disabled={loading}>{loading ? "Scanning…" : "Rescan"}</button>
       </div>
     </div>
@@ -552,7 +586,7 @@ function PreviewTreemap({ root }: { root: Node }) {
   );
 }
 
-function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgress, scanning, onOpenDups }: {
+function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgress, scanning, onOpenDups, loose, onOrganize }: {
   root: Node | null;
   tm: TimeMachineStatus | null;
   colorMap: Map<string, string>;
@@ -562,6 +596,8 @@ function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgre
   dupProgress: { hashed: number; total: number } | null;
   scanning: boolean;
   onOpenDups: () => void;
+  loose: { count: number; bytes: number; sources: string[] } | null;
+  onOrganize: () => void;
 }) {
   // The candidate total only settles once the disk walk ends, so show a
   // determinate bar then; while the walk is still streaming files, animate.
@@ -634,6 +670,27 @@ function Sidebar({ root, tm, colorMap, onRecommend, dups, dupScanning, dupProgre
           <div className="status">
             <div className="txt">
               <div className="t2">{dups ? "None found" : "…"}</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="side-sec">
+        <h3 className="side-h">Loose images</h3>
+        {loose && loose.count > 0 ? (
+          <div className="rec" onClick={onOrganize} title="Sort loose images">
+            <div className="rbody">
+              <div className="r1">{loose.count.toLocaleString()} loose image{loose.count === 1 ? "" : "s"}</div>
+              <div className="r2">
+                <span className="r2t">{loose.sources.join(" · ") || "Get organized"}</span>
+                <span className="amt">{fmtBytes(loose.bytes)}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="status">
+            <div className="txt">
+              <div className="t2">{loose ? "No loose images to sort" : "…"}</div>
             </div>
           </div>
         )}

@@ -6,6 +6,7 @@ import {
   defaultSettings, demoImages, leafName, moveItem,
   type Destination, type ImageFile, type SortSettings,
 } from "./lib/sort";
+import { ViewSeg, type SegView } from "./ViewSeg";
 
 // ---- icons (match the app's stroke style) ------------------------------------
 const S = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" } as const;
@@ -25,6 +26,7 @@ const IcBack = () => <svg viewBox="0 0 24 24" {...S}><path d="M19 12H5M12 19l-7-
 const IcPlus = () => <svg viewBox="0 0 24 24" {...S}><path d="M12 5v14M5 12h14" /></svg>;
 const IcDesktop = () => <svg viewBox="0 0 24 24" {...S}><rect x="2" y="4" width="20" height="14" rx="2" /><path d="M8 21h8M12 18v3" /></svg>;
 const IcDownload = () => <svg viewBox="0 0 24 24" {...S}><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><path d="M7 10l5 5 5-5M12 15V3" /></svg>;
+const IcReveal = () => <svg viewBox="0 0 24 24" {...S}><path d="M3 7h6l2 2h10v9a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>;
 const IcGrip = () => <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.4" /><circle cx="15" cy="6" r="1.4" /><circle cx="9" cy="12" r="1.4" /><circle cx="15" cy="12" r="1.4" /><circle cx="9" cy="18" r="1.4" /><circle cx="15" cy="18" r="1.4" /></svg>;
 
 const FOLDER_COLORS = ["var(--c-photo)", "var(--c-docs)", "var(--c-audio)", "var(--c-archive)", "var(--c-dev)", "var(--c-video)"];
@@ -88,7 +90,9 @@ function demoReviewSeed(queue: ImageFile[], dests: Destination[]): DemoSeed {
 }
 
 // =============================================================================
-export default function SortFlow({ home, onClose, initial = "overview" }: { home: string | null; onClose: () => void; initial?: SortInitial }) {
+export default function SortFlow({ home, onClose, initial = "overview", scope = null, onSelectView }: {
+  home: string | null; onClose: () => void; initial?: SortInitial; scope?: string | null; onSelectView?: (m: SegView) => void;
+}) {
   const tauri = api.isTauri();
   const [settings, setSettings] = useState<SortSettings | null>(null);
   const [images, setImages] = useState<ImageFile[] | null>(null);
@@ -116,18 +120,25 @@ export default function SortFlow({ home, onClose, initial = "overview" }: { home
     })();
   }, [tauri, home]);
 
-  // (Re)load the loose images whenever the set of source folders changes.
-  const sourceKey = settings?.sources.join("|") ?? "";
+  // (Re)load the loose images whenever the folder set changes. A `scope` (the
+  // folder the user clicked "Organize" on) overrides the configured sources and
+  // opens the reviewer directly for that one folder.
+  const folders = scope ? [scope] : (settings?.sources ?? []);
+  const sourceKey = folders.join("|");
   useEffect(() => {
     if (!settings) return;
     let cancelled = false;
     (async () => {
       try {
-        const imgs = tauri ? await api.listLooseImages(settings.sources) : demoImages();
+        const all = tauri ? await api.listLooseImages(folders) : demoImages();
+        // In the browser demo a scope can only narrow the canned image set.
+        const imgs = !tauri && scope ? all.filter((i) => i.source === leafName(scope)) : all;
         if (!cancelled) {
           setImages(imgs);
-          // Demo deep link straight into the reviewer (screenshot tool).
-          if (initial === "reviewer" && imgs.length) { setQueue(imgs); setSession((s) => s + 1); }
+          // A scope (or the screenshot deep link) opens the reviewer straight away.
+          if ((scope || initial === "reviewer") && imgs.length) {
+            setQueue(imgs); setSession((s) => s + 1); setStep("reviewer");
+          }
         }
       } catch (e) {
         if (!cancelled) { setError(String(e)); setImages([]); }
@@ -166,13 +177,11 @@ export default function SortFlow({ home, onClose, initial = "overview" }: { home
 
   return (
     <div className="app sortflow">
-      <SortTitlebar ctx={stepCtx} onClose={onClose} onSettings={() => setSettingsOpen(true)} />
+      <SortTitlebar ctx={stepCtx} onClose={onClose} onSettings={() => setSettingsOpen(true)} view="organize" onSelectView={onSelectView} />
       {error && <div className="sf-error" onClick={() => setError(null)}>{error} · click to dismiss</div>}
 
       {!settings || !images ? (
         <div className="sf-flow"><div className="state">Loading…</div></div>
-      ) : step === "overview" ? (
-        <Overview settings={settings} images={images} onStart={startPile} onSettings={() => setSettingsOpen(true)} />
       ) : step === "reviewer" ? (
         <Reviewer
           key={session}
@@ -181,8 +190,12 @@ export default function SortFlow({ home, onClose, initial = "overview" }: { home
           onComplete={onComplete} onExit={() => setStep("overview")} onError={setError}
           onRemoveImage={removeImage} onRestoreImage={restoreImage}
         />
-      ) : (
+      ) : step === "complete" ? (
         <Complete summary={summary!} tauri={tauri} onSortMore={() => setStep("overview")} onClose={onClose} onSettings={() => setSettingsOpen(true)} />
+      ) : scope ? (
+        <ScopedEmpty folder={scope} onBack={onClose} />
+      ) : (
+        <Overview settings={settings} images={images} onStart={startPile} onSettings={() => setSettingsOpen(true)} />
       )}
 
       {settingsOpen && settings && images && (
@@ -196,15 +209,35 @@ export default function SortFlow({ home, onClose, initial = "overview" }: { home
 }
 
 // ---- titlebar ----------------------------------------------------------------
-function SortTitlebar({ ctx, onClose, onSettings }: { ctx: string; onClose: () => void; onSettings?: () => void }) {
+function SortTitlebar({ ctx, onClose, onSettings, view, onSelectView }: {
+  ctx: string; onClose: () => void; onSettings?: () => void; view?: SegView; onSelectView?: (m: SegView) => void;
+}) {
   return (
     <div className="titlebar" data-tauri-drag-region>
       <div className="app-name">disk<span className="dot">·</span>solve</div>
+      {onSelectView && <ViewSeg view={view ?? "organize"} onSelect={onSelectView} />}
       <span className="sf-tb-sep">›</span>
       <span className="sf-tb-ctx">{ctx}</span>
       <div className="sf-tb-tools">
         {onSettings && (<button className="sf-iconbtn" title="Filing locations" onClick={onSettings}><IcGear /></button>)}
         <button className="sf-iconbtn" title="Close" onClick={onClose}><IcClose /></button>
+      </div>
+    </div>
+  );
+}
+
+// Shown when "Organize" is clicked on a folder with no loose images at its top
+// level — the scoped flow has nothing to put in the reviewer.
+function ScopedEmpty({ folder, onBack }: { folder: string; onBack: () => void }) {
+  return (
+    <div className="sf-flow">
+      <div className="sf-inner narrow">
+        <div className="sf-hero">
+          <div className="sf-check"><IcCheck /></div>
+          <h1 className="sf-h1">Nothing to sort here</h1>
+          <p className="sf-lede">No loose images at the top level of <b>{leafName(folder)}</b>.</p>
+        </div>
+        <div className="sf-done-actions"><button className="btn" onClick={onBack}>Back to disk view</button></div>
       </div>
     </div>
   );
@@ -632,6 +665,11 @@ function Reviewer({ queue, destinations, tauri, active, demoSeed, onComplete, on
             {cur && <span className="sf-exif">{fmtBytes(cur.size)}</span>}
             {cur && <span className="sf-exif">{cur.ext.toUpperCase()}</span>}
           </div>
+          {tauri && cur && (
+            <button className="sf-iconbtn" title="Show in Finder" onClick={() => api.revealInFinder(cur.path).catch((e) => onError(String(e)))}>
+              <IcReveal />
+            </button>
+          )}
         </div>
         <div className="sf-stage-view">
           <button className="sf-nav prev" title="Previous (←)" onClick={() => move(-1)}><svg viewBox="0 0 24 24" {...S}><path d="M15 18l-6-6 6-6" /></svg></button>

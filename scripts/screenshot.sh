@@ -83,7 +83,10 @@ dress() { # raw.png -> out.png
     \( +clone -background black -shadow 55x$((12 * SCALE))+0+$((7 * SCALE)) \) \
     +swap -background none -compose Over -layers merge +repage \
     -bordercolor none -border $((10 * SCALE)) \
-    -strip "$out"
+    -strip -colors 256 "png8:$out"
+  # Quantize to a 256-colour indexed PNG: these are flat-UI screenshots, so the
+  # palette is visually lossless (dithering keeps the soft drop shadow smooth)
+  # while cutting each file ~60-70% so the README loads quickly on GitHub.
 }
 
 shoot() { # url-hash out-name label

@@ -19,8 +19,10 @@ const CAT_COLOR: Record<Category, string> = {
   dev: "#5b8def", video: "#e8716d", audio: "#c189d6", photo: "#f0a35e", docs: "#3fb0a4",
   apps: "#76c269", system: "#9aa1ad", cache: "#c5cad3", archive: "#d8b65c", trash: "#b8939c", other: "#b9bfca",
 };
+// The Finder app face: a squircle with two eyes, a nose, and a smile — distinct
+// from the monochrome open/navigate controls so "Reveal in Finder" reads clearly.
 const ICON_REVEAL = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7h6l2 2h10v9a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="5" /><path d="M9 8.5v2" /><path d="M15 8.5v2" /><path d="M12 10.6v1.6l1.4 .9" /><path d="M8.5 15q3.5 2.5 7 0" /></svg>
 );
 const ICON_TRASH = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /></svg>
@@ -861,7 +863,7 @@ function ListView({
                     <span className="szbar"><span className="szfill" style={{ width: `${Math.round((n.size / maxSize) * 100)}%`, background: CAT_COLOR[n.category] }} /></span>
                     <b>{fmtBytes(n.size)}</b>
                   </span>
-                  <span className="l-items">{n.item_count.toLocaleString()}</span>
+                  <span className="l-items">{n.is_dir ? n.item_count.toLocaleString() : ""}</span>
                   <span className={"l-used" + (stale ? " stale" : "")}>{fmtRelTime(n.mtime)}</span>
                   {n.path && (
                     <span className="l-act">
